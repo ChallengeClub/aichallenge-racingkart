@@ -1,0 +1,12 @@
+services:
+  simulator:
+    image: "aichallenge-2025-dev:dzn"
+    environment:
+      - AWSIM_FORCE_VULKAN=1
+      - AWSIM_FORCE_DEVICE_INDEX=0
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/dzn_icd.x86_64.json
+      - LD_LIBRARY_PATH=/usr/lib/wsl/lib
+    volumes:
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+    devices:
+      - /dev/dxg
