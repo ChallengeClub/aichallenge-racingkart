@@ -1,63 +1,63 @@
-# VLM Driving Commentary Tools
+# VLM走行実況ツール
 
-This directory contains experimental tools for generating VLM-based driving commentary from AI Challenge / AWSIM camera videos and ROS 2 bags.
+このディレクトリには、自動運転AIチャレンジ / AWSIM の車載カメラ映像とROS 2 bagを使って、VLMによる走行実況を生成するための実験用ツール群があります。
 
-The tools are intended for research, visualization, and team discussion. They are not required by the official evaluation runtime.
+目的は、走行動画をあとから振り返りやすくしたり、VLMを自動運転開発の観察・説明・デバッグ補助に使えるかを試すことです。公式評価の実行に必要なコードではありません。
 
-## References
+## 関連資料
 
-- Current write-up: https://qiita.com/kiwsdiv/items/94ff578a486f022119f0
-- Sample driving video: https://www.youtube.com/watch?v=o4JYSiev4UI
+- 現時点のまとめ記事: https://qiita.com/kiwsdiv/items/94ff578a486f022119f0
+- 走行動画: https://www.youtube.com/watch?v=o4JYSiev4UI
 
-## What This Provides
+## できること
 
-- Offline commentary generation from a camera video and a synchronized rosbag.
-- Semi-realtime ROS 2 node that subscribes to camera and vehicle-state topics.
-- VOICEVOX narration synthesis.
-- Video/audio mixing with timing and delay overlays.
-- Camera preprocessing experiments for local VLM input.
+- 録画済みの車載カメラ動画とrosbag/mcapを同期して、オフラインで走行実況を生成する
+- ROS 2 topicを購読しながら、準リアルタイムに実況テキストを生成する
+- VOICEVOXを使って実況音声を生成する
+- 生成した音声を動画に重ね、遅延やキュー詰まりを可視化する
+- VLMに渡すカメラ画像の前処理方法を比較する
 
-The current design assumes a local VLM stack such as Ollama with `llava:7b` for vision and `qwen3:8b` for text generation. Template-only modes are also available for lower latency.
+現時点では、Ollama上の `llava:7b` を画像認識、`qwen3:8b` を日本語文生成に使う構成を主に想定しています。低遅延を優先する場合は、VLMを使わずテンプレートで実況するモードも用意しています。
 
-## Main Scripts
+## 主要スクリプト
 
-| Script | Purpose |
+| ファイル | 役割 |
 | --- | --- |
-| `synced_mcap_vlm_commentary.py` | Generate commentary from a recorded camera video and rosbag/mcap vehicle data. |
-| `realtime_vlm_commentary_node.py` | ROS 2 node for semi-realtime VLM/template commentary. |
-| `run_mpc_camera_rosbag_capture.sh` | Helper runner for MPC camera capture, rosbag recording, and optional realtime commentary. |
-| `make_realtime_commentary_mix.py` | Mix realtime commentary WAV files into a capture video and write delay overlays. |
-| `make_dual_realtime_commentary_mix.py` | Mix primary driving commentary and secondary scenery commentary. |
-| `make_voicevox_commentary_audio.py` | Convert commentary JSONL into a scheduled VOICEVOX narration WAV. |
-| `compare_camera_preprocessing_vlm.py` | Compare camera preprocessing variants with local VLM commentary. |
-| `benchmark_vlm_preprocessing_tags.py` | Benchmark local VLM tag extraction across preprocessing variants. |
-| `sensor_grounded_vlm_commentary.py` | Generate sensor-grounded VLM commentary from sampled frames and vehicle data. |
-| `ros_camera_viewer.py` | Simple ROS 2 camera viewer for monitoring. |
+| `synced_mcap_vlm_commentary.py` | 録画済み動画とrosbag/mcapを同期して実況を生成する |
+| `realtime_vlm_commentary_node.py` | カメラ画像と車両状態topicを購読して準リアルタイム実況を生成するROS 2 node |
+| `run_mpc_camera_rosbag_capture.sh` | MPC走行、カメラ録画、rosbag記録、任意でリアルタイム実況をまとめて実行する補助スクリプト |
+| `make_realtime_commentary_mix.py` | realtime nodeが出力したWAVを動画に重ね、遅延表示つき動画を作る |
+| `make_dual_realtime_commentary_mix.py` | 運転実況と風景実況の2系統音声を動画に重ねる |
+| `make_voicevox_commentary_audio.py` | `commentary.jsonl` からVOICEVOX音声WAVを作る |
+| `compare_camera_preprocessing_vlm.py` | カメラ前処理の違いによるVLM実況結果を比較する |
+| `benchmark_vlm_preprocessing_tags.py` | カメラ前処理ごとのVLMタグ抽出をベンチマークする |
+| `sensor_grounded_vlm_commentary.py` | カメラフレームと車両データを使って、センサ情報に基づく実況を生成する |
+| `ros_camera_viewer.py` | ROS 2 camera topicを簡易表示する |
 
-## Requirements
+## 必要な環境
 
-Run inside the AI Challenge development environment where ROS 2 Humble and the AI Challenge workspace are available.
+基本的には、自動運転AIチャレンジの開発環境内で使う想定です。ROS 2 HumbleとAI Challenge workspaceが使える状態を前提にしています。
 
-Typical additional dependencies:
+追加で使うもの:
 
-- Python packages: `opencv-python`, `numpy`
-- ROS Python packages: `rclpy`, `cv_bridge`, `rosbag2_py`, `rosidl_runtime_py`
-- Local VLM server: Ollama
-- Optional TTS server: VOICEVOX
-- Optional video mixing: ffmpeg or the `linuxserver/ffmpeg:latest` container image
+- Python: `opencv-python`, `numpy`
+- ROS Python: `rclpy`, `cv_bridge`, `rosbag2_py`, `rosidl_runtime_py`
+- ローカルVLMサーバ: Ollama
+- 任意: VOICEVOX
+- 任意: ffmpeg、または `linuxserver/ffmpeg:latest` コンテナ
 
-Example Ollama models:
+Ollamaモデルの例:
 
 ```bash
 ollama pull llava:7b
 ollama pull qwen3:8b
 ```
 
-VOICEVOX is optional. Without VOICEVOX, the tools still write text JSONL output.
+VOICEVOXは必須ではありません。VOICEVOXなしでも、実況テキストのJSONL出力までは生成できます。
 
-## Offline Commentary From Recorded Video
+## まず試すなら: 録画済み動画からのオフライン実況生成
 
-Use this mode first when sharing with others. It is easier to reproduce than the realtime node.
+チーム内で最初に共有・再現するなら、リアルタイムnodeよりもオフライン生成のほうが扱いやすいです。
 
 ```bash
 python3 tools/rl_metrics/synced_mcap_vlm_commentary.py \
@@ -70,22 +70,22 @@ python3 tools/rl_metrics/synced_mcap_vlm_commentary.py \
   --text-model qwen3:8b
 ```
 
-Outputs include:
+主な出力:
 
 - `commentary.jsonl`
-- synchronized vehicle data
-- sampled/preprocessed frames
-- generated commentary text
+- 同期した車両データ
+- サンプリングしたカメラフレーム
+- 生成された実況テキスト
 
-If video start and bag start are offset, set:
+動画開始時刻とbag開始時刻にずれがある場合は、以下で補正します。
 
 ```bash
 --bag-video-offset-sec <seconds>
 ```
 
-## Scheduled VOICEVOX Narration
+## VOICEVOXで実況音声を作る
 
-After generating `commentary.jsonl`, create a narration WAV:
+`commentary.jsonl` を生成したあと、VOICEVOXで音声WAVを作れます。
 
 ```bash
 python3 tools/rl_metrics/make_voicevox_commentary_audio.py \
@@ -96,11 +96,13 @@ python3 tools/rl_metrics/make_voicevox_commentary_audio.py \
   --speaker 3
 ```
 
-## Semi-Realtime Commentary Node
+## 準リアルタイム実況node
 
-`realtime_vlm_commentary_node.py` subscribes to camera and vehicle-state topics and writes commentary records as JSONL. It can call a VLM, use template-only output, and optionally synthesize VOICEVOX audio.
+`realtime_vlm_commentary_node.py` は、カメラ画像と車両状態topicを購読しながら実況を生成するROS 2 nodeです。
 
-Basic example:
+VLMを使うモード、テンプレートだけで生成するモード、VOICEVOXで音声化するモードがあります。
+
+テンプレートのみの低遅延例:
 
 ```bash
 python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
@@ -115,7 +117,7 @@ python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
   --template-style event_fast
 ```
 
-VLM + text model example:
+VLMとLLMを使う例:
 
 ```bash
 python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
@@ -127,7 +129,7 @@ python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
   --text-model qwen3:8b
 ```
 
-VOICEVOX example:
+VOICEVOXで音声も生成する例:
 
 ```bash
 python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
@@ -139,21 +141,21 @@ python3 tools/rl_metrics/realtime_vlm_commentary_node.py \
   --voicevox-speed-scale 1.30
 ```
 
-Low-latency recommendation:
+低遅延で使う場合のおすすめ設定:
 
 - `--commentary-mode template`
 - `--template-style event_fast`
 - `--commentary-trigger event`
 - `--min-speak-interval-sec 3.0`
-- VOICEVOX speed scale around `1.30`
+- `--voicevox-speed-scale 1.30` 前後
 
-This avoids waiting for VLM inference on every utterance.
+毎回VLM推論を待たないため、実況タイミングを優先できます。
 
-## Capture Runner With Optional Commentary
+## 走行・録画・実況をまとめて実行する
 
-`run_mpc_camera_rosbag_capture.sh` can record camera video and rosbag, and optionally launch the realtime commentary node.
+`run_mpc_camera_rosbag_capture.sh` は、MPC走行、カメラ録画、rosbag記録、任意でリアルタイム実況node起動までまとめて行う補助スクリプトです。
 
-Example:
+例:
 
 ```bash
 RUN_ID=mpc-vlm-commentary-demo \
@@ -166,26 +168,26 @@ REALTIME_VOICEVOX_SPEED_SCALE=1.30 \
 tools/rl_metrics/run_mpc_camera_rosbag_capture.sh
 ```
 
-Important environment variables:
+主な環境変数:
 
-| Variable | Default | Meaning |
+| 変数 | 既定値 | 意味 |
 | --- | --- | --- |
-| `REALTIME_COMMENTARY` | `false` | Enable realtime commentary node. |
-| `REALTIME_IMAGE_TOPIC` | `/sensing/camera/image_raw` | Camera topic. |
-| `REALTIME_INTERVAL_SEC` | `3.0` | Commentary sampling interval. |
-| `REALTIME_PREPROCESS` | `lower_80x40` | Camera preprocessing for VLM input. |
-| `REALTIME_COMMENTARY_MODE` | `llm` | `llm` or `template`. |
-| `REALTIME_COMMENTARY_TRIGGER` | `interval` | `interval` or `event`. |
-| `REALTIME_TEMPLATE_STYLE` | `normal` | `normal`, `short`, `event`, `event_fast`, etc. |
-| `REALTIME_VISION_MODEL` | `llava:7b` | Ollama vision model. |
-| `REALTIME_TEXT_MODEL` | `qwen3:8b` | Ollama text model. |
-| `REALTIME_VOICEVOX_URL` | empty | If set, synthesize WAV files. |
-| `REALTIME_VOICEVOX_SPEAKER` | `3` | VOICEVOX speaker id. |
-| `REALTIME_VOICEVOX_SPEED_SCALE` | `1.08` | Speech speed. |
+| `REALTIME_COMMENTARY` | `false` | リアルタイム実況nodeを起動する |
+| `REALTIME_IMAGE_TOPIC` | `/sensing/camera/image_raw` | カメラtopic |
+| `REALTIME_INTERVAL_SEC` | `3.0` | 実況生成間隔 |
+| `REALTIME_PREPROCESS` | `lower_80x40` | VLM入力用の画像前処理 |
+| `REALTIME_COMMENTARY_MODE` | `llm` | `llm` または `template` |
+| `REALTIME_COMMENTARY_TRIGGER` | `interval` | `interval` または `event` |
+| `REALTIME_TEMPLATE_STYLE` | `normal` | `normal`, `short`, `event`, `event_fast` など |
+| `REALTIME_VISION_MODEL` | `llava:7b` | Ollamaの画像モデル |
+| `REALTIME_TEXT_MODEL` | `qwen3:8b` | Ollamaのテキストモデル |
+| `REALTIME_VOICEVOX_URL` | 空 | 指定するとVOICEVOX音声を生成する |
+| `REALTIME_VOICEVOX_SPEAKER` | `3` | VOICEVOX speaker id |
+| `REALTIME_VOICEVOX_SPEED_SCALE` | `1.08` | 話速 |
 
-## Mixing Realtime Commentary Into Video
+## 生成した音声を動画に重ねる
 
-After a realtime run, mix generated WAV files into the capture video:
+realtime nodeで生成したWAVを、録画済み動画に重ねる例です。
 
 ```bash
 python3 tools/rl_metrics/make_realtime_commentary_mix.py \
@@ -199,11 +201,11 @@ python3 tools/rl_metrics/make_realtime_commentary_mix.py \
   --schedule-jsonl output/<run_id>/d1/realtime_commentary_schedule.jsonl
 ```
 
-Use `--timeline-start-wall-file` when available. It aligns audio playback to the screen-capture wall-clock timeline instead of assuming the first commentary record starts at video time zero.
+`--timeline-start-wall-file` がある場合は指定してください。画面録画の開始wall-timeを基準に音声を配置できるため、動画と実況の同期が取りやすくなります。
 
-## Output Files
+## 出力ファイル
 
-Typical realtime output directory:
+realtime nodeの代表的な出力は以下です。
 
 ```text
 realtime_commentary.jsonl
@@ -213,30 +215,30 @@ audio/
   line_001.wav
 ```
 
-Each JSONL record may include:
+JSONLには、以下のような情報が入ります。
 
-- image timestamp
-- vehicle speed
-- control command
-- generated text
-- VLM/text/TTS latency
-- audio file path
-- wall-clock timing fields
+- 画像timestamp
+- 車速
+- 制御指令
+- 生成テキスト
+- VLM / テキスト生成 / TTS の遅延
+- 音声ファイルパス
+- wall-clock timing
 
-## Current Limitations
+## 現時点の制限
 
-- The realtime node is experimental and intended for visualization/research.
-- VLM latency depends heavily on model size, GPU/CPU, and image preprocessing.
-- Template modes are more stable for realtime timing than LLM-generated Japanese prose.
-- VOICEVOX audio can queue up if utterances are too long or too frequent.
-- Camera preprocessing is tuned for the AI Challenge camera view and may need adjustment for other views.
-- The scripts assume local access to the AI Challenge ROS 2 topics and recorded output layout.
-- This branch does not modify the official evaluation behavior.
+- 実験用ツールであり、公式評価用の本番コードではない
+- VLMの遅延は、モデルサイズ、GPU/CPU、画像前処理に大きく依存する
+- リアルタイム性を優先するなら、LLM生成よりテンプレート生成のほうが安定する
+- VOICEVOX音声が長すぎるとキューが詰まり、実況が遅れる
+- カメラ前処理はAIチャレンジの車載カメラ視点に合わせている
+- 他のカメラ視点や別コースでは前処理の調整が必要
+- このブランチは公式評価の挙動を変更しない
 
-## Suggested Sharing Flow
+## チーム内での共有手順案
 
-1. Start with offline `synced_mcap_vlm_commentary.py` on a known capture and bag.
-2. Share generated `commentary.jsonl` and a sample video with narration.
-3. Then try `realtime_vlm_commentary_node.py` in template/event mode.
-4. Use VLM inference as an optional enhancement, not as the first dependency.
+1. まず `synced_mcap_vlm_commentary.py` で録画済み動画から実況を作る
+2. `commentary.jsonl` と実況つき動画を共有する
+3. 次に `realtime_vlm_commentary_node.py` をテンプレート/eventモードで試す
+4. VLM推論は、最初の必須依存ではなく、追加機能として試す
 
