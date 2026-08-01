@@ -6,6 +6,7 @@ from typing import Any, Type
 import yaml
 from action.default_action_adapter import DefaultAWSIMActionAdapter
 from action.interfaces import ActionAdapter
+from action.pilotnet_residual_action_adapter import PilotNetResidualActionAdapter
 from action.raceline_residual_action_adapter import RacelineResidualActionAdapter
 from context.context_manager import AWSIMContextManager
 from observation.default_observation import (
@@ -136,6 +137,16 @@ def select_action_adapter(action_cfg: dict) -> ActionAdapter:
             max_steering=float(action_cfg.get("max_steering", 1.0)),
             steering_gain=float(action_cfg.get("steering_gain", 1.0)),
             loop_start_index=int(action_cfg.get("loop_start_index", 0)),
+        )
+    if name == "pilotnet_residual_action_adapter":
+        return PilotNetResidualActionAdapter(
+            package_path=str(action_cfg["package_path"]),
+            checkpoint_path=str(action_cfg["checkpoint_path"]),
+            steering_residual_scale=float(action_cfg.get("steering_residual_scale", 0.0)),
+            acceleration_residual_scale=float(
+                action_cfg.get("acceleration_residual_scale", 0.0)
+            ),
+            max_speed_mps=float(action_cfg.get("max_speed_mps", 4.0)),
         )
     raise ValueError(f"Unknown action adapter name: {name}")
 

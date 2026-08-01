@@ -8,6 +8,8 @@
 
 この文書は公式資料ではありません。環境構築方法や競技仕様は、必ず大会の公式ドキュメントと公式リポジトリで最新情報を確認してください。
 
+> **競技適合性に関する重要な注意:** この文書の前半で説明する走行ライン追従型の残差SACは、絶対位置・姿勢・走行ラインCSVを推論時に使用します。2026年AI部門SIM決勝で使用可能と明記されているセンサーはCamera、LiDAR、Steer Angle、Wheel Odometry、Gear Statusであり、GNSS等は使用できません。そのため、走行ライン版は研究・比較用であり、競技向け推論構成としてそのまま使用しないでください。規定を意識したCamera版については「16. 2026年AI部門ルールを意識した追加検証」を参照してください。
+
 - 公式SAC解説: <https://automotiveaichallenge.github.io/aichallenge-documentation-racingkart/ml_sample/soft_actor_critic.html>
 - 公式ドキュメント: <https://automotiveaichallenge.github.io/aichallenge-documentation-racingkart/>
 - 公式リポジトリ: <https://github.com/AutomotiveAIChallenge/aichallenge-racingkart>
@@ -379,3 +381,135 @@ aichallenge/ml_workspace/reinforcement_learning/workspace/stable_laps_v4/config.
 ```
 
 モデル、TensorBoardログ、チェックポイント、AWSIMログなどの生成物は、ソースコードとは分けて管理してください。巨大ファイルや環境固有情報を含む生ログは公開リポジトリへコミットしないよう注意が必要です。
+
+## 16. 2026年AI部門ルールを意識した追加検証
+
+### 16.1 使用可能なセンサー
+
+2026年AI部門SIM決勝の公式ルールでは、使用可能なセンサーとして次が挙げられています。
+
+- Camera
+- LiDAR
+- Steer Angle
+- Wheel Odometry
+- Gear Status
+
+GNSSなど、SW部門で使用できる一部のセンサーはAI部門では使用できません。IMUも使用可能センサーの一覧には含まれていません。
+
+公式ルール: <https://automotiveaichallenge.github.io/aichallenge-documentation-racingkart/competition/ai-class.html>
+
+### 16.2 検証した仮説
+
+走行ライン版の代わりに、次の構成なら規定を意識しながら残差SACを適用できると仮定しました。
+
+```text
+Camera画像
+    ↓
+同梱の学習済みPilotNet
+    ↓
+基準操舵・基準加速
+    ＋
+Camera画像とWheel Odometryを観測するSACの小さな補正
+    ↓
+最終操作
+```
+
+PilotNetは、前方カメラ画像から加速と操舵を推定するEnd-to-Endモデルです。リポジトリに含まれる学習済み重みを基準方策として使用しました。
+
+SACへ渡す観測は、公式SACサンプルと同様に次の2つだけです。
+
+- 64×64のCamera画像
+- Wheel Odometryから得る車速
+
+制御・観測・報酬では、次を使用していません。
+
+- GNSS
+- IMU
+- 絶対位置・姿勢
+- `/localization/kinematic_state`
+- 走行ラインCSV
+- セクション番号やラップ数
+
+セクション番号とラップ数は、シミュレーション終了後の評価指標としてのみ確認しました。
+
+### 16.3 実装
+
+Camera版のアクションアダプターを追加しました。
+
+```text
+aichallenge/ml_workspace/reinforcement_learning/src/action/pilotnet_residual_action_adapter.py
+```
+
+実験設定は次のファイルです。
+
+```text
+aichallenge/ml_workspace/reinforcement_learning/workspace/regulation_camera_v1/config.yaml
+```
+
+基準方策はPilotNetの出力を使用し、許可されているWheel Odometryの車速が上限を超えた場合だけ加速を抑制します。
+
+```text
+最終操舵 = PilotNet操舵 + 0.005 × SAC操舵
+最終加速 = PilotNet加速 + 0.005 × SAC加速
+```
+
+SACの補正幅は±0.5%に制限しました。
+
+### 16.4 PilotNet基準単独の結果
+
+SAC残差をゼロに固定し、AWSIMとAutowareを完全再起動した状態から評価しました。
+
+- 3,000ステップ完走
+- 途中リセット0回
+- `lap=2` へ1,859ステップで到達
+- 最大セクション8
+- 最大速度2.44 m/s
+- 最終速度1.93 m/s
+
+Cameraだけを使うPilotNet基準でも、1周以上の安定走行を確認できました。
+
+### 16.5 残差SACの学習
+
+Camera画像と車速だけを観測し、次の報酬で3,000ステップ学習しました。
+
+- 速度報酬
+- 衝突罰則
+- 時間罰則
+- 操舵量罰則
+- 操舵・加速の変化量罰則
+
+走行ライン進捗、横ずれ、セクション、ラップの報酬は無効にしました。
+
+学習中は±2%の補正でも探索の連続により最初のエピソードが737ステップで終了しました。このことから、PilotNet基準の安全余裕は大きくなく、SACの補正権限を慎重に制限する必要があると分かりました。
+
+### 16.6 学習済みモデルの独立評価
+
+最初に±2%の補正で評価したところ、748ステップ、`lap=1`、section 3で停止しました。そこで同じSACモデルの補正幅を±0.5%へ制限し、AWSIMとAutowareを完全再起動して再評価しました。
+
+最終結果は次のとおりです。
+
+- 3,000ステップ完走
+- 途中終了・リセットなし
+- `lap=2` へ1,879ステップで到達
+- 最大セクション8
+- 最終速度1.95 m/s
+- 総報酬2,659.13
+
+今回の1回の独立評価では、許可センサーを意識した構成でも、SACモデルを使用しながら1周以上の安定走行が可能でした。
+
+### 16.7 結論と制約
+
+検証した仮説は、少なくともAWSIM上の1エピソードでは成立しました。
+
+ただし、今回の安定性の中心は学習済みPilotNetであり、SACの補正幅は±0.5%です。SACがラップタイムや横ずれを大きく改善したことまでは確認できていません。「SACを使っている」ことと「SACが性能向上へ有意に貢献している」ことは分けて評価する必要があります。
+
+また、PilotNetの学習時に使われた教師データや、学習済み重みの大会利用条件については、最終的に運営へ確認するのが安全です。
+
+次の検証では、次を推奨します。
+
+1. 複数エピソードで完走率を測る
+2. PilotNet単独と残差SACのラップタイムを比較する
+3. 複数seedでSACを学習する
+4. 補正幅を0.5%、1%、2%で比較する
+5. カメラタイムアウトを減らすためPilotNet推論を高速化する
+6. LiDARも使った安全監視・コースアウト回避を追加する
