@@ -23,6 +23,8 @@ x-autoware-base: &autoware-base
     - HOST_GID=${HOST_GID:-}
     - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-1}
     - LOG_DIR=${LOG_DIR:-}
+    # Optional runtime override used by isolated ML teacher-data collection.
+    - CONTROL_METHOD=${CONTROL_METHOD:-rl_train}
   volumes:
     - ./output:${OUTPUT_ROOT:-/output}
     - ./aichallenge:/aichallenge
