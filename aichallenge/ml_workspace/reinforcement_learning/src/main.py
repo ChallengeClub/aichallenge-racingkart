@@ -33,6 +33,10 @@ if __name__ == '__main__':
                         help='Path to saved model (default: awsim_sac_model)')
     parser.add_argument('--episodes', type=int, default=5,
                         help='Number of episodes to run in inference (default: 5)')
+    parser.add_argument('--random-steps', type=int, default=200,
+                        help='Number of steps for the default sanity loop')
+    parser.add_argument('--zero-action', action='store_true',
+                        help='Use zero residual action in the default sanity loop')
     args = parser.parse_args()
 
     cfgs = load_config(args.config)
@@ -79,10 +83,23 @@ if __name__ == '__main__':
         print("Check passed!")
 
     elif args.train:
+        from stable_baselines3.common.callbacks import CheckpointCallback
+
         model = select_algorithm(algorithm_cfg, env)
+        checkpoint_callback = None
+        checkpoint_freq = int(algorithm_cfg.get('checkpoint_freq', 0))
+        if checkpoint_freq > 0:
+            checkpoint_callback = CheckpointCallback(
+                save_freq=checkpoint_freq,
+                save_path=str(config_base_dir / 'checkpoints'),
+                name_prefix='sac',
+                save_replay_buffer=False,
+                save_vecnormalize=False,
+            )
         model.learn(
             total_timesteps=int(algorithm_cfg.get('total_timesteps', 300_000)),
             log_interval=int(algorithm_cfg.get('log_interval', 1)),
+            callback=checkpoint_callback,
         )
         model.save(algorithm_cfg['save_path'])
 
@@ -103,6 +120,8 @@ if __name__ == '__main__':
             obs, info = env.reset()
             ep_reward = 0.0
             ep_steps  = 0
+            max_section = 0
+            max_cross_track_error = 0.0
             done = False
 
             print(f"=== Episode {ep + 1} / {args.episodes} ===")
@@ -114,6 +133,10 @@ if __name__ == '__main__':
 
                 ep_reward += reward
                 ep_steps  += 1
+                max_section = max(max_section, int(info['section']))
+                max_cross_track_error = max(
+                    max_cross_track_error, float(info.get('cross_track_error_m', 0.0))
+                )
                 done = terminated or truncated
 
                 print(
@@ -121,13 +144,15 @@ if __name__ == '__main__':
                     f"reward={reward:7.3f} | "
                     f"speed={info['speed']:.2f} m/s | "
                     f"section={info['section']} | "
-                    f"lap={info['lap_count']}"
+                    f"lap={info['lap_count']} | "
+                    f"cte={info.get('cross_track_error_m', 0.0):.2f} m"
                 )
 
             print(
                 f"Episode {ep + 1} finished: "
                 f"total_reward={ep_reward:.2f}, steps={ep_steps}, "
-                f"laps={info['lap_count']}, lap_time={info['lap_time']:.2f}s"
+                f"laps={info['lap_count']}, max_section={max_section}, "
+                f"max_cte={max_cross_track_error:.2f}m, lap_time={info['lap_time']:.2f}s"
             )
 
     else:
@@ -135,10 +160,18 @@ if __name__ == '__main__':
         print("Running random action loop for sanity check...")
         obs, info = env.reset()
         print(f"Reset done. image shape={obs['image'].shape}, speed={obs['speed'][0]:.2f}")
-        for i in range(200):
-            action = env.action_space.sample()
+        for i in range(args.random_steps):
+            action = (
+                env.action_space.sample()
+                if not args.zero_action
+                else env.action_space.sample() * 0.0
+            )
             obs, reward, terminated, truncated, info = env.step(action)
-            print(f"step={i+1:3d} | reward={reward:.3f} | speed={info['speed']:.2f} | terminated={terminated}")
+            print(
+                f"step={i+1:3d} | reward={reward:.3f} | speed={info['speed']:.2f} | "
+                f"section={info['section']} | lap={info['lap_count']} | "
+                f"cte={info.get('cross_track_error_m', 0.0):.2f} | terminated={terminated}"
+            )
             if terminated:
                 print("Episode ended. Resetting...")
                 obs, info = env.reset()

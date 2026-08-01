@@ -65,6 +65,8 @@ class AWSIMEnv(gym.Env):
         self._node = AWSIMEnvNode()
 
         self._step_count = 0
+        self._previous_sim_action = None
+        self._latest_context = None
 
         # 外部クラス
         self._context_manager = context_manager
@@ -94,7 +96,7 @@ class AWSIMEnv(gym.Env):
 
         # 1. action の前処理
         # 現時点では行動空間の拡張はノードのpublish_controlも変わるため不可能
-        sim_action = self._action_adapter.adapt(action)
+        sim_action = self._action_adapter.adapt(action, self._latest_context)
         steering = float(sim_action["steering"])
         acceleration = float(sim_action["acceleration"])
         sim_action = np.array([steering, acceleration], dtype=np.float32)
@@ -116,6 +118,8 @@ class AWSIMEnv(gym.Env):
             agent_action=action,
             sim_action=sim_action,
         )
+        ctx.info["previous_sim_action"] = self._previous_sim_action
+        self._latest_context = ctx
 
         # 6. observation生成
         obs, ctx = self._observation_builder.build(ctx)
@@ -125,6 +129,7 @@ class AWSIMEnv(gym.Env):
 
         # 8. 報酬計算
         reward, ctx = self._reward_function.compute(ctx)
+        self._previous_sim_action = sim_action.copy()
 
         # 9. info生成
         info = self._build_info_from_context(ctx)
@@ -152,6 +157,8 @@ class AWSIMEnv(gym.Env):
         
         # 2. step countリセット
         self._step_count = 0
+        self._previous_sim_action = None
+        self._latest_context = None
     
         # 3. AWSIM がリセット可能な状態になるまで待機
         self._node.get_logger().info("Waiting for AWSIM resettable state...")
@@ -165,6 +172,7 @@ class AWSIMEnv(gym.Env):
         # ここは将来的に、車両の姿勢とかで判断したい。simが始まってから動き出せるまで時間がかかる。ここをどう判断するか。
         self._node.sensing_camera_image_raw = None  # 古い画像をクリア
         self._wait_for_fresh_image(timeout_sec=3.0, spin_timeout_sec=0.1)
+        self._wait_for_kinematic_state(timeout_sec=3.0, spin_timeout_sec=0.1)
 
         # 6. context更新
         ctx = self._context_manager.update(
@@ -173,6 +181,7 @@ class AWSIMEnv(gym.Env):
             agent_action=None,
             sim_action=None,
         )
+        self._latest_context = ctx
 
         # 7. observation生成
         obs, ctx = self._observation_builder.build(ctx)
@@ -227,6 +236,19 @@ class AWSIMEnv(gym.Env):
                 )
                 break
             time.sleep(0.1)
+
+    def _wait_for_kinematic_state(
+        self,
+        timeout_sec: float = 3.0,
+        spin_timeout_sec: float = 0.1,
+    ) -> None:
+        """Wait until raceline-based observations have a valid map-frame pose."""
+        deadline = time.time() + timeout_sec
+        while self._node.localization_kinematic_state is None:
+            rclpy.spin_once(self._node, timeout_sec=spin_timeout_sec)
+            if time.time() > deadline:
+                self._node.get_logger().warn("kinematic state timeout")
+                break
 
     def _build_info_from_context(self, ctx: StepContext) -> dict:
         """StepContext から info dict を構築する。"""

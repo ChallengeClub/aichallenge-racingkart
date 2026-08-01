@@ -9,7 +9,7 @@ vehicles="${1:-1}"
 exec $AWSIM_DIRECTORY/AWSIM.x86_64 \
     --venue citycircuit \
     --start-mode count \
-    --start-count-seconds 5 \
+    --start-count-seconds 0 \
     --vehicles "${vehicles}" \
     --npcs 0 \
     --boosts 2 \
@@ -21,7 +21,7 @@ exec $AWSIM_DIRECTORY/AWSIM.x86_64 \
     --handicap off \
     --wall-recovery off \
     --ranking off \
-    --camera off \
+    --camera cpu \
     --lidar off
 
 # Cameraを使う場合 : --camera cpu or gpu

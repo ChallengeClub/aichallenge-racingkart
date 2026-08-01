@@ -5,8 +5,14 @@ from typing import Any, Type
 
 import yaml
 from action.default_action_adapter import DefaultAWSIMActionAdapter
+from action.interfaces import ActionAdapter
+from action.raceline_residual_action_adapter import RacelineResidualActionAdapter
 from context.context_manager import AWSIMContextManager
-from observation.default_observation import ImageSpeedObservationBuilder
+from observation.default_observation import (
+    ImageSpeedObservationBuilder,
+    RacelineImageSpeedObservationBuilder,
+)
+from observation.interfaces import ObservationBuilder
 from reward.default_reward import DefaultAWSIMReward
 from termination.default_termination import CollisionTermination
 from termination.interfaces import TerminationFunction
@@ -60,6 +66,8 @@ def select_algorithm(algorithm_cfg: dict, env):
             use_sde=bool(algorithm_cfg.get("use_sde", True)),
             sde_sample_freq=int(algorithm_cfg.get("sde_sample_freq", 64)),
             policy_kwargs=_build_policy_kwargs(algorithm_cfg),
+            seed=int(algorithm_cfg.get("seed", 42)),
+            device=str(algorithm_cfg.get("device", "auto")),
         )
 
     raise ValueError(f"Unknown algorithm name: {name}")
@@ -101,7 +109,7 @@ def select_context_manager(context_cfg: dict) -> AWSIMContextManager:
     raise ValueError(f"Unknown context manager name: {name}")
 
 
-def select_action_adapter(action_cfg: dict) -> DefaultAWSIMActionAdapter:
+def select_action_adapter(action_cfg: dict) -> ActionAdapter:
     name = str(action_cfg.get("name", "default_awsim_action_adapter")).lower()
     if name == "default_awsim_action_adapter":
         return DefaultAWSIMActionAdapter(
@@ -109,14 +117,40 @@ def select_action_adapter(action_cfg: dict) -> DefaultAWSIMActionAdapter:
             max_steering=float(action_cfg["max_steering"]),
             min_accel=float(action_cfg["min_accel"]),
             max_accel=float(action_cfg["max_accel"]),
+            sim_min_accel=(
+                float(action_cfg["sim_min_accel"]) if "sim_min_accel" in action_cfg else None
+            ),
+            sim_max_accel=(
+                float(action_cfg["sim_max_accel"]) if "sim_max_accel" in action_cfg else None
+            ),
+        )
+    if name == "raceline_residual_action_adapter":
+        return RacelineResidualActionAdapter(
+            raceline_csv_path=str(action_cfg["raceline_csv_path"]),
+            lookahead_index=int(action_cfg.get("lookahead_index", 5)),
+            wheelbase_m=float(action_cfg.get("wheelbase_m", 1.0)),
+            target_speed_mps=float(action_cfg.get("target_speed_mps", 4.0)),
+            speed_kp=float(action_cfg.get("speed_kp", 0.4)),
+            steering_residual_scale=float(action_cfg.get("steering_residual_scale", 0.2)),
+            acceleration_residual_scale=float(action_cfg.get("acceleration_residual_scale", 0.2)),
+            max_steering=float(action_cfg.get("max_steering", 1.0)),
+            steering_gain=float(action_cfg.get("steering_gain", 1.0)),
+            loop_start_index=int(action_cfg.get("loop_start_index", 0)),
         )
     raise ValueError(f"Unknown action adapter name: {name}")
 
 
-def select_observation_builder(observation_cfg: dict) -> ImageSpeedObservationBuilder:
+def select_observation_builder(observation_cfg: dict) -> ObservationBuilder:
     name = str(observation_cfg.get("name", "default_image_speed_observation_builder")).lower()
     if name == "default_image_speed_observation_builder":
         return ImageSpeedObservationBuilder()
+    if name == "raceline_image_speed_observation_builder":
+        return RacelineImageSpeedObservationBuilder(
+            raceline_csv_path=str(observation_cfg["raceline_csv_path"]),
+            lookahead_indices=[int(v) for v in observation_cfg.get("lookahead_indices", [0, 3, 8, 15])],
+            position_scale_m=float(observation_cfg.get("position_scale_m", 30.0)),
+            loop_start_index=int(observation_cfg.get("loop_start_index", 0)),
+        )
     raise ValueError(f"Unknown observation builder name: {name}")
 
 
@@ -127,6 +161,21 @@ def select_reward_function(reward_cfg: dict) -> DefaultAWSIMReward:
             speed_reward_scale=float(reward_cfg["speed_reward_scale"]),
             step_time_penalty=float(reward_cfg["step_time_penalty"]),
             collision_penalty=float(reward_cfg.get("collision_penalty", 100.0)),
+            section_progress_bonus=float(reward_cfg.get("section_progress_bonus", 0.0)),
+            lap_completion_bonus=float(reward_cfg.get("lap_completion_bonus", 0.0)),
+            steering_penalty_scale=float(reward_cfg.get("steering_penalty_scale", 0.0)),
+            steering_change_penalty_scale=float(
+                reward_cfg.get("steering_change_penalty_scale", 0.0)
+            ),
+            acceleration_change_penalty_scale=float(
+                reward_cfg.get("acceleration_change_penalty_scale", 0.0)
+            ),
+            raceline_progress_reward_scale=float(
+                reward_cfg.get("raceline_progress_reward_scale", 0.0)
+            ),
+            cross_track_penalty_scale=float(
+                reward_cfg.get("cross_track_penalty_scale", 0.0)
+            ),
         )
     raise ValueError(f"Unknown reward function name: {name}")
 

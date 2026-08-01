@@ -72,6 +72,11 @@ extract_map:
         position:
           x: kinematic_pose_x_m
           y: kinematic_pose_y_m
+        orientation:
+          x: kinematic_orientation_x
+          y: kinematic_orientation_y
+          z: kinematic_orientation_z
+          w: kinematic_orientation_w
     twist:
       twist:
         linear:

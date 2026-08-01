@@ -76,7 +76,9 @@ class AWSIMContextManager:
         curr_lap = int(env_state.get_value("awsim_lap_count", 0.0))
         prev_lap = int(prev.get_value("awsim_lap_count", 0.0)) if prev is not None else 0
 
-        section_changed = prev is not None and curr_section > prev_section
+        # Section numbers wrap at the start/finish line. A reset cannot create
+        # a false positive because reset() clears _prev_env_state first.
+        section_changed = prev is not None and curr_section != prev_section
         lap_completed = prev is not None and curr_lap > prev_lap
 
         return StepContext(

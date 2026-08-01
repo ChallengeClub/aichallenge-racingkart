@@ -24,7 +24,7 @@ class ActionAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def adapt(self, action: np.ndarray) -> dict[str, Any]:
+    def adapt(self, action: np.ndarray, context: Any = None) -> dict[str, Any]:
         """
         agent action を simulator 制御コマンド辞書へ変換する。
         例: {"steering": float, "acceleration": float, "gear": int}

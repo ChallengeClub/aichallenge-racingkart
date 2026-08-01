@@ -25,3 +25,9 @@ doc/tmp/*
 
 docs/plan/
 result-*.json
+
+# Reinforcement-learning artifacts are large, local experiment outputs.
+aichallenge/ml_workspace/reinforcement_learning/workspace/*/checkpoints/
+aichallenge/ml_workspace/reinforcement_learning/workspace/*/log/
+aichallenge/ml_workspace/reinforcement_learning/workspace/*/model.zip
+aichallenge/ml_workspace/reinforcement_learning/workspace/stable_laps_v[1-3]/

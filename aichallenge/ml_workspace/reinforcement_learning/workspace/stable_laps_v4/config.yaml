@@ -1,0 +1,68 @@
+algorithm:
+  name: sac
+  policy: MultiInputPolicy
+  verbose: 1
+  seed: 45
+  device: cuda
+  learning_rate: 0.0002
+  ent_coef: auto_0.1
+  train_freq: [4, step]
+  batch_size: 128
+  gradient_steps: 4
+  learning_starts: 500
+  buffer_size: 100000
+  gamma: 0.995
+  tau: 0.01
+  use_sde_at_warmup: false
+  use_sde: false
+  net_arch: [256, 256]
+  total_timesteps: 3000
+  log_interval: 1
+  checkpoint_freq: 1000
+  wrapper_order: [timelimit]
+  timelimit:
+    enable: true
+    max_episode_steps: 3000
+
+context_manager:
+  name: default_awsim_context_manager
+
+action_adapter:
+  name: raceline_residual_action_adapter
+  raceline_csv_path: /aichallenge/workspace/src/aichallenge_submit/simple_trajectory_generator/data/raceline_awsim_30km_from_garage.csv
+  lookahead_index: 2
+  wheelbase_m: 1.087
+  target_speed_mps: 2.0
+  speed_kp: 1.0
+  steering_residual_scale: 0.02
+  acceleration_residual_scale: 0.02
+  max_steering: 1.0
+  steering_gain: 1.5
+  loop_start_index: 12
+
+observation_builder:
+  name: raceline_image_speed_observation_builder
+  raceline_csv_path: /aichallenge/workspace/src/aichallenge_submit/simple_trajectory_generator/data/raceline_awsim_30km_from_garage.csv
+  lookahead_indices: [0, 3, 8, 15]
+  position_scale_m: 30.0
+  loop_start_index: 12
+
+reward:
+  name: default_awsim_reward
+  speed_reward_scale: 0.5
+  step_time_penalty: 0.05
+  collision_penalty: 50.0
+  section_progress_bonus: 10.0
+  lap_completion_bonus: 200.0
+  steering_penalty_scale: 0.02
+  steering_change_penalty_scale: 0.05
+  acceleration_change_penalty_scale: 0.01
+  raceline_progress_reward_scale: 3.0
+  cross_track_penalty_scale: 0.2
+
+termination:
+  name: default_collision_termination
+  collision_speed_threshold: 0.2
+  collision_count_threshold: 180
+  collision_speed_drop_threshold: 1.5
+  min_speed_before_drop: 2.0
