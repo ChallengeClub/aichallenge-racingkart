@@ -51,6 +51,62 @@ def infer_speech_type(lane: str, data: dict) -> str:
     return "normal"
 
 
+def first_value(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def nested(mapping: dict, *keys: str):
+    current = mapping
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
+    vehicle_data = data.get("vehicle_data") or data.get("vehicleData") or {}
+    vehicle_summary = data.get("vehicle_summary") or data.get("vehicleSummary") or {}
+    visual_summary = data.get("visual_summary") or data.get("visualSummary")
+
+    context = {
+        "lane": lane,
+        "speechType": speech_type,
+    }
+    for key in ("index", "image_stamp_sec", "event_type", "event_reason", "commentary_type"):
+        if data.get(key) is not None:
+            context[key] = data.get(key)
+
+    if isinstance(vehicle_data, dict):
+        values = {
+            "speed_kmh": first_value(nested(vehicle_data, "ego", "speed_kmh"), vehicle_data.get("speed_kmh")),
+            "target_speed_kmh": first_value(
+                nested(vehicle_data, "control_cmd", "target_speed_kmh"),
+                vehicle_data.get("target_speed_kmh"),
+            ),
+            "phase": first_value(nested(vehicle_data, "driving_state", "phase"), vehicle_data.get("phase")),
+            "vehicle_has_moved": vehicle_data.get("vehicle_has_moved"),
+            "actual_accel_mps2": nested(vehicle_data, "acceleration", "actual_accel_mps2"),
+        }
+        context.update({key: value for key, value in values.items() if value is not None})
+
+    if isinstance(vehicle_summary, dict):
+        values = {
+            "speed_kmh": first_value(context.get("speed_kmh"), vehicle_summary.get("speed_kmh_end")),
+            "target_speed_kmh": first_value(context.get("target_speed_kmh"), vehicle_summary.get("target_speed_kmh_end")),
+            "motion_trend": vehicle_summary.get("motion_trend"),
+            "turning": vehicle_summary.get("turning"),
+        }
+        context.update({key: value for key, value in values.items() if value is not None})
+
+    if isinstance(visual_summary, str) and visual_summary.strip():
+        context["visual_summary"] = visual_summary.strip()
+    return context
+
+
 def speech_metadata(lane: str, data: dict) -> dict:
     speech_type = infer_speech_type(lane, data)
     defaults = SPEECH_TYPE_DEFAULTS.get(speech_type, SPEECH_TYPE_DEFAULTS["normal"])
@@ -74,6 +130,9 @@ def speech_metadata(lane: str, data: dict) -> dict:
     ):
         if key in data and data.get(key) is not None:
             metadata[key] = data.get(key)
+    driving_context = compact_driving_context(lane, data, speech_type)
+    if len(driving_context) > 2:
+        metadata["drivingContext"] = driving_context
     return metadata
 
 
