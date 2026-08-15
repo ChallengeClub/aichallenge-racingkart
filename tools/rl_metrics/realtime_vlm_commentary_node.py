@@ -976,6 +976,30 @@ PERSONA_PROFILES = {
 }
 
 
+def load_persona_profiles(profile_file: str) -> None:
+    if not profile_file:
+        return
+    path = Path(profile_file)
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    profiles = data.get("profiles") if isinstance(data, dict) else None
+    if not isinstance(profiles, dict):
+        return
+    for name, profile in profiles.items():
+        if not isinstance(name, str) or not isinstance(profile, dict):
+            continue
+        current = dict(PERSONA_PROFILES.get(name, {}))
+        for key in ("prompt", "recovery_prefix", "soften_recovery", "tameguchi", "mascot"):
+            if key in profile:
+                current[key] = profile[key]
+        if "prompt" in current:
+            PERSONA_PROFILES[name] = current
+
+
 def persona_profile(style: str) -> dict:
     return PERSONA_PROFILES.get(style, PERSONA_PROFILES["passenger_casual_light"])
 
@@ -2470,7 +2494,8 @@ def main() -> None:
     parser.add_argument("--skip-events", default=os.getenv("SKIP_EVENTS", ""))
     parser.add_argument("--min-speak-interval-sec", type=float, default=float(os.getenv("MIN_SPEAK_INTERVAL_SEC", "4.0")))
     parser.add_argument("--template-style", default=os.getenv("TEMPLATE_STYLE", "normal"), choices=["normal", "short", "event", "event_fast", "scenery", "vlm_tags"])
-    parser.add_argument("--persona-style", default=os.getenv("PERSONA_STYLE", "passenger_casual_light"), choices=sorted(PERSONA_PROFILES))
+    parser.add_argument("--persona-style", default=os.getenv("PERSONA_STYLE", "passenger_casual_light"))
+    parser.add_argument("--character-profile-file", default=os.getenv("CHARACTER_PROFILE_FILE", ""))
     parser.add_argument("--default-ambient-context", default=os.getenv("DEFAULT_AMBIENT_CONTEXT", ""))
     parser.add_argument("--course-context", default=os.getenv("COURSE_CONTEXT", ""))
     parser.add_argument("--max-commentary-chars", type=int, default=int(os.getenv("MAX_COMMENTARY_CHARS", "45")))
@@ -2484,6 +2509,12 @@ def main() -> None:
     parser.add_argument("--voicevox-speaker", type=int, default=int(os.getenv("VOICEVOX_SPEAKER", "3")))
     parser.add_argument("--voicevox-speed-scale", type=float, default=float(os.getenv("VOICEVOX_SPEED_SCALE", "1.08")))
     args = parser.parse_args()
+    load_persona_profiles(args.character_profile_file)
+    if args.persona_style not in PERSONA_PROFILES:
+        raise SystemExit(
+            f"unknown persona style: {args.persona_style}; "
+            f"available: {', '.join(sorted(PERSONA_PROFILES))}"
+        )
 
     rclpy.init()
     node = RealtimeVLMCommentary(args)
