@@ -76,7 +76,12 @@ PERSONA_STYLE="${PERSONA_STYLE:-loose_mascot}"
 CHARACTER_PROFILE_FILE_HOST="${CHARACTER_PROFILE_FILE_HOST:-${ROOT}/tools/aituber_passenger_demo/aituber_character_profile.json}"
 CHARACTER_PROFILE_FILE_CONTAINER="${CHARACTER_PROFILE_FILE_CONTAINER:-/repo_tools/aituber_passenger_demo/aituber_character_profile.json}"
 DEFAULT_AMBIENT_CONTEXT="${DEFAULT_AMBIENT_CONTEXT:-urban_buildings,blue_white_barrier,open_sky}"
-COURSE_CONTEXT_FILE="${COURSE_CONTEXT_FILE:-}"
+DEFAULT_COURSE_CONTEXT_FILE="${ROOT}/tools/rl_metrics/course_context/course_knowledge.json"
+COURSE_CONTEXT_FILE="${COURSE_CONTEXT_FILE:-${DEFAULT_COURSE_CONTEXT_FILE}}"
+if [[ -n "${COURSE_CONTEXT_FILE}" && ! -f "${COURSE_CONTEXT_FILE}" ]]; then
+  echo "warning: COURSE_CONTEXT_FILE not found: ${COURSE_CONTEXT_FILE}; running without course context" >&2
+  COURSE_CONTEXT_FILE=""
+fi
 
 HOST_OUT="${ROOT}/output/${RUN_ID}/d1"
 DEMO_OUT="${WORK}/aituber-demo-20260729/${RUN_ID}"
