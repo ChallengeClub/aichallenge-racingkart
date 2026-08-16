@@ -71,12 +71,14 @@ def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
     vehicle_data = data.get("vehicle_data") or data.get("vehicleData") or {}
     vehicle_summary = data.get("vehicle_summary") or data.get("vehicleSummary") or {}
     visual_summary = data.get("visual_summary") or data.get("visualSummary")
+    visual_tags = data.get("visual_tags") or data.get("visualTags")
+    visual_description = data.get("visual_description") or data.get("visualDescription")
 
     context = {
         "lane": lane,
         "speechType": speech_type,
     }
-    for key in ("index", "image_stamp_sec", "event_type", "event_reason", "commentary_type"):
+    for key in ("index", "image_stamp_sec", "event_type", "event_reason", "commentary_type", "commentary_mode"):
         if data.get(key) is not None:
             context[key] = data.get(key)
 
@@ -102,8 +104,18 @@ def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
         }
         context.update({key: value for key, value in values.items() if value is not None})
 
-    if isinstance(visual_summary, str) and visual_summary.strip():
+    if isinstance(visual_summary, dict) and visual_summary:
+        context["visual_summary"] = visual_summary
+    elif isinstance(visual_summary, str) and visual_summary.strip():
         context["visual_summary"] = visual_summary.strip()
+    if isinstance(visual_tags, dict) and visual_tags:
+        context["visual_tags"] = visual_tags
+    if isinstance(visual_description, str) and visual_description.strip():
+        context["visual_description"] = visual_description.strip()
+    if isinstance(vehicle_summary, dict) and vehicle_summary:
+        context["vehicle_summary"] = vehicle_summary
+    if isinstance(data.get("commentary"), str) and data["commentary"].strip():
+        context["commentary"] = data["commentary"].strip()
     return context
 
 
@@ -127,9 +139,20 @@ def speech_metadata(lane: str, data: dict) -> dict:
         "commentary_type",
         "commentary_mode",
         "commentary_trigger",
+        "commentary",
     ):
         if key in data and data.get(key) is not None:
             metadata[key] = data.get(key)
+    for key in (
+        "vehicle_data",
+        "vehicle_summary",
+        "visual_summary",
+        "visual_tags",
+        "visual_description",
+    ):
+        value = data.get(key) or data.get("".join(part.capitalize() if i else part for i, part in enumerate(key.split("_"))))
+        if value:
+            metadata[key] = value
     driving_context = compact_driving_context(lane, data, speech_type)
     if len(driving_context) > 2:
         metadata["drivingContext"] = driving_context
