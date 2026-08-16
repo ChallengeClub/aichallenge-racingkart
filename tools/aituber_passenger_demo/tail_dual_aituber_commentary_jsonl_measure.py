@@ -73,6 +73,7 @@ def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
     visual_summary = data.get("visual_summary") or data.get("visualSummary")
     visual_tags = data.get("visual_tags") or data.get("visualTags")
     visual_description = data.get("visual_description") or data.get("visualDescription")
+    course_context = data.get("course_context") or data.get("courseContext")
 
     context = {
         "lane": lane,
@@ -94,6 +95,8 @@ def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
             "actual_accel_mps2": nested(vehicle_data, "acceleration", "actual_accel_mps2"),
         }
         context.update({key: value for key, value in values.items() if value is not None})
+        if not course_context:
+            course_context = vehicle_data.get("course_context") or vehicle_data.get("courseContext")
 
     if isinstance(vehicle_summary, dict):
         values = {
@@ -114,6 +117,8 @@ def compact_driving_context(lane: str, data: dict, speech_type: str) -> dict:
         context["visual_description"] = visual_description.strip()
     if isinstance(vehicle_summary, dict) and vehicle_summary:
         context["vehicle_summary"] = vehicle_summary
+    if isinstance(course_context, dict) and course_context:
+        context["course_context"] = course_context
     if isinstance(data.get("commentary"), str) and data["commentary"].strip():
         context["commentary"] = data["commentary"].strip()
     return context
@@ -149,6 +154,7 @@ def speech_metadata(lane: str, data: dict) -> dict:
         "visual_summary",
         "visual_tags",
         "visual_description",
+        "course_context",
     ):
         value = data.get(key) or data.get("".join(part.capitalize() if i else part for i, part in enumerate(key.split("_"))))
         if value:
