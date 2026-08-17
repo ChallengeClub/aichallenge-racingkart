@@ -76,11 +76,27 @@ PERSONA_STYLE="${PERSONA_STYLE:-loose_mascot}"
 CHARACTER_PROFILE_FILE_HOST="${CHARACTER_PROFILE_FILE_HOST:-${ROOT}/tools/aituber_passenger_demo/aituber_character_profile.json}"
 CHARACTER_PROFILE_FILE_CONTAINER="${CHARACTER_PROFILE_FILE_CONTAINER:-/repo_tools/aituber_passenger_demo/aituber_character_profile.json}"
 DEFAULT_AMBIENT_CONTEXT="${DEFAULT_AMBIENT_CONTEXT:-urban_buildings,blue_white_barrier,open_sky}"
-DEFAULT_COURSE_CONTEXT_FILE="${ROOT}/tools/rl_metrics/course_context/course_knowledge.json"
-COURSE_CONTEXT_FILE="${COURSE_CONTEXT_FILE:-${DEFAULT_COURSE_CONTEXT_FILE}}"
-if [[ -n "${COURSE_CONTEXT_FILE}" && ! -f "${COURSE_CONTEXT_FILE}" ]]; then
-  echo "warning: COURSE_CONTEXT_FILE not found: ${COURSE_CONTEXT_FILE}; running without course context" >&2
-  COURSE_CONTEXT_FILE=""
+DEFAULT_COURSE_CONTEXT_FILE_HOST="${ROOT}/tools/rl_metrics/course_context/course_knowledge.json"
+DEFAULT_COURSE_CONTEXT_FILE_CONTAINER="/repo_tools/rl_metrics/course_context/course_knowledge.json"
+COURSE_CONTEXT_FILE_HOST="${COURSE_CONTEXT_FILE_HOST:-${DEFAULT_COURSE_CONTEXT_FILE_HOST}}"
+COURSE_CONTEXT_FILE_CONTAINER="${COURSE_CONTEXT_FILE_CONTAINER:-${DEFAULT_COURSE_CONTEXT_FILE_CONTAINER}}"
+if [[ -n "${COURSE_CONTEXT_FILE:-}" ]]; then
+  if [[ "${COURSE_CONTEXT_FILE}" == /repo_tools/* ]]; then
+    COURSE_CONTEXT_FILE_CONTAINER="${COURSE_CONTEXT_FILE}"
+    COURSE_CONTEXT_FILE_HOST="${ROOT}/tools/${COURSE_CONTEXT_FILE#/repo_tools/}"
+  else
+    COURSE_CONTEXT_FILE_HOST="${COURSE_CONTEXT_FILE}"
+    if [[ "${COURSE_CONTEXT_FILE}" == "${ROOT}/tools/"* ]]; then
+      COURSE_CONTEXT_FILE_CONTAINER="/repo_tools/${COURSE_CONTEXT_FILE#"${ROOT}/tools/"}"
+    else
+      COURSE_CONTEXT_FILE_CONTAINER="${COURSE_CONTEXT_FILE}"
+    fi
+  fi
+fi
+if [[ -n "${COURSE_CONTEXT_FILE_HOST}" && ! -f "${COURSE_CONTEXT_FILE_HOST}" ]]; then
+  echo "warning: COURSE_CONTEXT_FILE not found on host: ${COURSE_CONTEXT_FILE_HOST}; running without course context" >&2
+  COURSE_CONTEXT_FILE_HOST=""
+  COURSE_CONTEXT_FILE_CONTAINER=""
 fi
 
 HOST_OUT="${ROOT}/output/${RUN_ID}/d1"
@@ -295,7 +311,7 @@ RUN_ID="${RUN_ID}" DURATION_SEC="${DURATION_SEC}" DOMAIN_ID=1 CONTROL_METHOD=mpc
   REALTIME_COMMENTARY_MODE=template REALTIME_TEMPLATE_STYLE=event_fast \
   REALTIME_PERSONA_STYLE="${PERSONA_STYLE}" \
   REALTIME_CHARACTER_PROFILE_FILE="${CHARACTER_PROFILE_FILE_CONTAINER}" \
-  REALTIME_COURSE_CONTEXT="${COURSE_CONTEXT_FILE}" \
+  REALTIME_COURSE_CONTEXT="${COURSE_CONTEXT_FILE_CONTAINER}" \
   REALTIME_SKIP_EVENTS="${REALTIME_SKIP_EVENTS}" \
   REALTIME_COMMENTARY_TRIGGER=event REALTIME_INTERVAL_SEC=0.5 REALTIME_MIN_SPEAK_INTERVAL_SEC=1.0 \
   REALTIME_PREPROCESS="${REALTIME_PREPROCESS}" REALTIME_MAX_COMMENTARY_CHARS=34 \
@@ -330,7 +346,7 @@ docker compose run -d --name "${RECAP_CONTAINER}" -v "${ROOT}/tools:/repo_tools:
     --persona-style '${PERSONA_STYLE}' \
     --character-profile-file '${CHARACTER_PROFILE_FILE_CONTAINER}' \
     --default-ambient-context '${DEFAULT_AMBIENT_CONTEXT}' \
-    --course-context '${COURSE_CONTEXT_FILE}' \
+    --course-context '${COURSE_CONTEXT_FILE_CONTAINER}' \
     --max-commentary-chars '${RECAP_MAX_COMMENTARY_CHARS}' \
     --vision-model '${RECAP_VISION_MODEL}' \
     --text-model '${RECAP_TEXT_MODEL}' \
