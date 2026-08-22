@@ -10,6 +10,7 @@ data_collection/
 ├── extract_collection.bash       # PilotNet用NumPy配列へ変換
 ├── analyze_collection.py         # 速度・停止率・トピック数の品質集計
 ├── prepare_sequence_split.py     # 走行単位のtrain/val分割
+├── evaluate_pilotnet.py          # PilotNet単独の複数回AWSIM評価
 └── collections/                  # 生成物。Git管理外
     └── <collection_id>/
         ├── collection.yaml       # 収集条件
@@ -75,6 +76,22 @@ python3 train.py \
   data.train_dir=/aichallenge/ml_workspace/pilot_net/data_collection/collections/<collection_id>/train \
   data.val_dir=/aichallenge/ml_workspace/pilot_net/data_collection/collections/<collection_id>/val
 ```
+
+## PilotNet単独の反復評価
+
+評価用設定では、SACの操舵・加速残差をともに`0.0`にします。AWSIMとAutowareを起動後、Autowareコンテナ内で次のように実行します。
+
+```bash
+cd /aichallenge/ml_workspace/reinforcement_learning
+ROS_DOMAIN_ID=1 python3 \
+  /aichallenge/ml_workspace/pilot_net/data_collection/evaluate_pilotnet.py \
+  --config <zero_residual_config.yaml> \
+  --episodes 10 \
+  --max-steps 1800 \
+  --output <evaluation_result.json>
+```
+
+エピソードごとの完走有無、終了区間、平均・最高速度、初回周回ステップと、全体の完走率をJSONへ保存します。出力先は`collections/`以下とし、モデルやrosbagと同様にGit管理対象外にします。
 
 ## 今回の収集結果
 
