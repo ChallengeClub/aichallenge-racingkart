@@ -21,6 +21,10 @@
       proportional_gain: 0.8
       min_acceleration: -0.2
       max_acceleration: 0.6
+      straight_boost_enabled: true
+      straight_speed_mps: 2.75
+      max_straight_steering: 0.08
+      minimum_straight_clearance_m: 12.0
 
     # The neural steering remains primary.  This residual acts only when the
     # forward sector is blocked, then holds the open-side turn briefly so that

@@ -16,6 +16,7 @@ from std_msgs.msg import Float32MultiArray
 class E2EMonitor(Node):
     def __init__(self):
         super().__init__("e2e_evaluation_monitor")
+        self.monitor_started_wall_time = time.monotonic()
         self.latest_speed = None
         self.max_speed = 0.0
         self.speed_sum = 0.0
@@ -26,6 +27,7 @@ class E2EMonitor(Node):
         self.latest_section = 0
         self.reported_lap_time_s = 0.0
         self.first_lap_wall_time = None
+        self.lap_transition_times_s = []
         self.last_moving_wall_time = None
 
         self.create_subscription(
@@ -57,6 +59,11 @@ class E2EMonitor(Node):
         section = int(msg.data[3])
         self.latest_lap = lap
         self.latest_section = section
+        if lap > self.max_lap:
+            elapsed = time.monotonic() - self.monitor_started_wall_time
+            self.lap_transition_times_s.append(
+                {"lap": lap, "elapsed_wall_time_s": elapsed}
+            )
         self.max_lap = max(self.max_lap, lap)
         self.max_section = max(self.max_section, section)
         self.reported_lap_time_s = float(msg.data[2])
@@ -103,12 +110,34 @@ def main():
             if node.first_lap_wall_time is not None
             else None
         )
+        lap_durations = []
+        for previous, current in zip(
+            node.lap_transition_times_s,
+            node.lap_transition_times_s[1:],
+        ):
+            if current["lap"] == previous["lap"] + 1:
+                lap_durations.append(
+                    {
+                        "completed_lap": previous["lap"],
+                        "duration_wall_time_s": (
+                            current["elapsed_wall_time_s"]
+                            - previous["elapsed_wall_time_s"]
+                        ),
+                    }
+                )
         result = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "elapsed_wall_time_s": elapsed,
             "stop_reason": stop_reason,
             "completed_at_least_one_lap": node.max_lap >= 2,
             "first_lap_wall_time_s": first_lap_elapsed,
+            "lap_transition_times_s": node.lap_transition_times_s,
+            "completed_lap_durations_s": lap_durations,
+            "best_completed_lap_duration_s": (
+                min(item["duration_wall_time_s"] for item in lap_durations)
+                if lap_durations
+                else None
+            ),
             "max_lap": node.max_lap,
             "max_section": node.max_section,
             "final_lap": node.latest_lap,

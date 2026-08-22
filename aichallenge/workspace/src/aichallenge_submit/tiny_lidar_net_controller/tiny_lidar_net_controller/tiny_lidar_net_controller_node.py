@@ -10,7 +10,11 @@ from autoware_auto_control_msgs.msg import AckermannControlCommand
 from autoware_auto_vehicle_msgs.msg import VelocityReport
 
 from tiny_lidar_net_controller_core import TinyLidarNetCore
-from tiny_lidar_net_controller.speed_controller import SpeedController
+from tiny_lidar_net_controller.speed_controller import (
+    SpeedController,
+    calculate_forward_clearance,
+    select_target_speed,
+)
 from pilot_net_controller.lidar_safety import LidarSafetyController
 
 
@@ -38,6 +42,10 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('speed_control.proportional_gain', 0.8)
         self.declare_parameter('speed_control.min_acceleration', -0.2)
         self.declare_parameter('speed_control.max_acceleration', 0.6)
+        self.declare_parameter('speed_control.straight_boost_enabled', True)
+        self.declare_parameter('speed_control.straight_speed_mps', 2.75)
+        self.declare_parameter('speed_control.max_straight_steering', 0.08)
+        self.declare_parameter('speed_control.minimum_straight_clearance_m', 12.0)
         self.declare_parameter('lidar_safety.enabled', True)
         self.declare_parameter('lidar_safety.activation_distance_m', 4.0)
         self.declare_parameter('lidar_safety.stop_distance_m', 0.5)
@@ -63,6 +71,18 @@ class TinyLidarNetNode(Node):
             max_acceleration=self.get_parameter('speed_control.max_acceleration').value,
         )
         self.current_speed_mps = None
+        self.straight_boost_enabled = self.get_parameter(
+            'speed_control.straight_boost_enabled'
+        ).value
+        self.straight_speed_mps = self.get_parameter(
+            'speed_control.straight_speed_mps'
+        ).value
+        self.max_straight_steering = self.get_parameter(
+            'speed_control.max_straight_steering'
+        ).value
+        self.minimum_straight_clearance_m = self.get_parameter(
+            'speed_control.minimum_straight_clearance_m'
+        ).value
         self.lidar_safety_enabled = self.get_parameter('lidar_safety.enabled').value
         self.lidar_safety = LidarSafetyController(
             activation_distance_m=self.get_parameter('lidar_safety.activation_distance_m').value,
@@ -141,8 +161,14 @@ class TinyLidarNetNode(Node):
         ranges = np.array(msg.ranges, dtype=np.float32)
         speed_scale = 1.0
         steering_correction = 0.0
+        angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
+        front_clearance = calculate_forward_clearance(
+            ranges,
+            angles,
+            range_min=msg.range_min,
+            range_max=msg.range_max,
+        )
         if self.lidar_safety_enabled:
-            angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
             speed_scale, steering_correction, _ = self.lidar_safety.compute(
                 ranges, angles, msg.range_min, msg.range_max
             )
@@ -155,8 +181,20 @@ class TinyLidarNetNode(Node):
                 if self.current_speed_mps is None
                 else self.speed_controller.compute(
                     self.current_speed_mps,
-                    target_speed_mps=(
-                        self.speed_controller.target_speed_mps * speed_scale
+                    target_speed_mps=select_target_speed(
+                        base_speed_mps=self.speed_controller.target_speed_mps,
+                        straight_speed_mps=(
+                            self.straight_speed_mps
+                            if self.straight_boost_enabled
+                            else self.speed_controller.target_speed_mps
+                        ),
+                        steering_angle=steer,
+                        max_straight_steering=self.max_straight_steering,
+                        front_clearance_m=front_clearance,
+                        minimum_straight_clearance_m=(
+                            self.minimum_straight_clearance_m
+                        ),
+                        safety_speed_scale=speed_scale,
                     ),
                 )
             )
