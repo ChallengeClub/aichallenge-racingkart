@@ -5,13 +5,31 @@
     model:
       image_height: 66
       image_width: 200
-      output_dim: 2
+      output_dim: 1
       color_space: "yuv"        # "rgb" or "yuv"
       crop_top_ratio: 0.375     # fraction of height to crop from top
       crop_bottom_ratio: 0.0    # fraction of height to crop from bottom
       ckpt_path: ""
 
-    control_mode: "ai"
+    # PilotNet predicts steering. Longitudinal speed is controlled separately
+    # from the permitted wheel-odometry input for a stable baseline.
+    control_mode: "fixed"
     acceleration: 0.6
+
+    speed_control:
+      enabled: true
+      target_speed_mps: 1.0
+      proportional_gain: 0.8
+      min_acceleration: -0.2
+      max_acceleration: 0.6
+
+    lidar_safety:
+      enabled: true
+      activation_distance_m: 6.0
+      stop_distance_m: 0.5
+      max_steering_correction: 0.6
+      minimum_speed_scale: 0.25
+      minimum_steering_correction: 0.5
+      recovery_hold_steps: 12
 
     debug: false

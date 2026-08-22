@@ -10,6 +10,28 @@
 
     max_range: 30.0              # LiDARの最大レンジ（メートル）
     control_mode: "fixed"          # "ai" または "fixed"
-    acceleration: 0.6            # 固定加速度コマンド mode:fixed の場合に使用
+    acceleration: 0.6            # 速度制御を無効化した場合の固定値
+
+    # Use permitted wheel odometry to launch with enough force, then hold a
+    # conservative speed.  A fixed low acceleration cannot overcome static
+    # friction, while the original 0.6 setting exceeds 5 m/s.
+    speed_control:
+      enabled: true
+      target_speed_mps: 2.5
+      proportional_gain: 0.8
+      min_acceleration: -0.2
+      max_acceleration: 0.6
+
+    # The neural steering remains primary.  This residual acts only when the
+    # forward sector is blocked, then holds the open-side turn briefly so that
+    # it is not cancelled immediately after the nose starts rotating.
+    lidar_safety:
+      enabled: true
+      activation_distance_m: 4.0
+      stop_distance_m: 0.5
+      max_steering_correction: 0.6
+      minimum_speed_scale: 0.5
+      minimum_steering_correction: 0.35
+      recovery_hold_steps: 6
 
     debug: false

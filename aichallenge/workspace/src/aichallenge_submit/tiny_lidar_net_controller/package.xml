@@ -13,6 +13,8 @@
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>autoware_auto_control_msgs</depend>
+  <depend>autoware_auto_vehicle_msgs</depend>
+  <depend>pilot_net_controller</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

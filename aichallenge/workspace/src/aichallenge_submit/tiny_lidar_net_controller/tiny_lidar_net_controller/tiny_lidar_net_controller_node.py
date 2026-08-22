@@ -7,8 +7,11 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import LaserScan
 from autoware_auto_control_msgs.msg import AckermannControlCommand
+from autoware_auto_vehicle_msgs.msg import VelocityReport
 
 from tiny_lidar_net_controller_core import TinyLidarNetCore
+from tiny_lidar_net_controller.speed_controller import SpeedController
+from pilot_net_controller.lidar_safety import LidarSafetyController
 
 
 class TinyLidarNetNode(Node):
@@ -30,6 +33,18 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('max_range', 30.0)
         self.declare_parameter('acceleration', 0.1)
         self.declare_parameter('control_mode', 'ai')
+        self.declare_parameter('speed_control.enabled', True)
+        self.declare_parameter('speed_control.target_speed_mps', 2.5)
+        self.declare_parameter('speed_control.proportional_gain', 0.8)
+        self.declare_parameter('speed_control.min_acceleration', -0.2)
+        self.declare_parameter('speed_control.max_acceleration', 0.6)
+        self.declare_parameter('lidar_safety.enabled', True)
+        self.declare_parameter('lidar_safety.activation_distance_m', 4.0)
+        self.declare_parameter('lidar_safety.stop_distance_m', 0.5)
+        self.declare_parameter('lidar_safety.max_steering_correction', 0.6)
+        self.declare_parameter('lidar_safety.minimum_speed_scale', 0.5)
+        self.declare_parameter('lidar_safety.minimum_steering_correction', 0.35)
+        self.declare_parameter('lidar_safety.recovery_hold_steps', 6)
         self.declare_parameter('debug', False)
 
         # --- Initialization ---
@@ -40,6 +55,27 @@ class TinyLidarNetNode(Node):
         max_range = self.get_parameter('max_range').value
         acceleration = self.get_parameter('acceleration').value
         control_mode = self.get_parameter('control_mode').value
+        self.speed_control_enabled = self.get_parameter('speed_control.enabled').value
+        self.speed_controller = SpeedController(
+            target_speed_mps=self.get_parameter('speed_control.target_speed_mps').value,
+            proportional_gain=self.get_parameter('speed_control.proportional_gain').value,
+            min_acceleration=self.get_parameter('speed_control.min_acceleration').value,
+            max_acceleration=self.get_parameter('speed_control.max_acceleration').value,
+        )
+        self.current_speed_mps = None
+        self.lidar_safety_enabled = self.get_parameter('lidar_safety.enabled').value
+        self.lidar_safety = LidarSafetyController(
+            activation_distance_m=self.get_parameter('lidar_safety.activation_distance_m').value,
+            stop_distance_m=self.get_parameter('lidar_safety.stop_distance_m').value,
+            max_steering_correction=self.get_parameter('lidar_safety.max_steering_correction').value,
+            minimum_speed_scale=self.get_parameter('lidar_safety.minimum_speed_scale').value,
+            minimum_steering_correction=self.get_parameter(
+                'lidar_safety.minimum_steering_correction'
+            ).value,
+            recovery_hold_steps=self.get_parameter(
+                'lidar_safety.recovery_hold_steps'
+            ).value,
+        )
         
         self.debug = self.get_parameter('debug').value
         self.log_interval = self.get_parameter('log_interval_sec').value
@@ -74,11 +110,21 @@ class TinyLidarNetNode(Node):
         self.sub_scan = self.create_subscription(
             LaserScan, "/scan", self.scan_callback, qos
         )
+        self.sub_velocity = self.create_subscription(
+            VelocityReport,
+            "/vehicle/status/velocity_status",
+            self.velocity_callback,
+            qos,
+        )
         self.pub_control = self.create_publisher(
             AckermannControlCommand, "/control/command/control_cmd", 1
         )
 
         self.get_logger().info("TinyLidarNetNode is ready.")
+
+    def velocity_callback(self, msg: VelocityReport):
+        """Store permitted wheel-odometry speed for longitudinal control."""
+        self.current_speed_mps = float(msg.longitudinal_velocity)
 
     def scan_callback(self, msg: LaserScan):
         """Callback for LaserScan subscription.
@@ -93,9 +139,28 @@ class TinyLidarNetNode(Node):
         # 1. Convert ROS message to Numpy
         # We pass the raw array; the core logic handles NaN/Inf and normalization.
         ranges = np.array(msg.ranges, dtype=np.float32)
+        speed_scale = 1.0
+        steering_correction = 0.0
+        if self.lidar_safety_enabled:
+            angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
+            speed_scale, steering_correction, _ = self.lidar_safety.compute(
+                ranges, angles, msg.range_min, msg.range_max
+            )
 
         # 2. Process via Core Logic
         accel, steer = self.core.process(ranges)
+        if self.speed_control_enabled:
+            accel = (
+                0.0
+                if self.current_speed_mps is None
+                else self.speed_controller.compute(
+                    self.current_speed_mps,
+                    target_speed_mps=(
+                        self.speed_controller.target_speed_mps * speed_scale
+                    ),
+                )
+            )
+        steer = float(np.clip(steer + steering_correction, -1.0, 1.0))
 
         # 3. Publish Command
         cmd = AckermannControlCommand()

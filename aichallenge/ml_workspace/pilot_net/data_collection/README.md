@@ -11,6 +11,7 @@ data_collection/
 ├── analyze_collection.py         # 速度・停止率・トピック数の品質集計
 ├── prepare_sequence_split.py     # 走行単位のtrain/val分割
 ├── evaluate_pilotnet.py          # PilotNet単独の複数回AWSIM評価
+├── monitor_e2e.py                # 公式E2Eモードの非介入モニター
 └── collections/                  # 生成物。Git管理外
     └── <collection_id>/
         ├── collection.yaml       # 収集条件
@@ -92,6 +93,15 @@ ROS_DOMAIN_ID=1 python3 \
 ```
 
 エピソードごとの完走有無、終了区間、平均・最高速度、初回周回ステップと、全体の完走率をJSONへ保存します。出力先は`collections/`以下とし、モデルやrosbagと同様にGit管理対象外にします。
+
+最新の公式E2Eモードでは、`make e2e`でCamera/LiDARを有効にして評価します。制御ノードへ介入せず、一走行の周回・区間・速度を記録する場合は次を使います。
+
+```bash
+ROS_DOMAIN_ID=1 python3 \
+  /aichallenge/ml_workspace/pilot_net/data_collection/monitor_e2e.py \
+  --duration-sec 240 \
+  --output <e2e_result.json>
+```
 
 ## 今回の収集結果
 

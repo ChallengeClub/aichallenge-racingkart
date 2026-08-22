@@ -7,9 +7,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
+from sensor_msgs.msg import LaserScan
 from autoware_auto_control_msgs.msg import AckermannControlCommand
+from autoware_auto_vehicle_msgs.msg import VelocityReport
 
 from pilot_net_controller_core import PilotNetCore
+from pilot_net_controller.speed_controller import SpeedController
+from pilot_net_controller.lidar_safety import LidarSafetyController
 
 
 class PilotNetNode(Node):
@@ -34,6 +38,18 @@ class PilotNetNode(Node):
 
         self.declare_parameter('model.crop_top_ratio', 0.0)
         self.declare_parameter('model.crop_bottom_ratio', 0.0)
+        self.declare_parameter('speed_control.enabled', True)
+        self.declare_parameter('speed_control.target_speed_mps', 2.0)
+        self.declare_parameter('speed_control.proportional_gain', 0.8)
+        self.declare_parameter('speed_control.min_acceleration', -0.2)
+        self.declare_parameter('speed_control.max_acceleration', 0.6)
+        self.declare_parameter('lidar_safety.enabled', True)
+        self.declare_parameter('lidar_safety.activation_distance_m', 6.0)
+        self.declare_parameter('lidar_safety.stop_distance_m', 0.5)
+        self.declare_parameter('lidar_safety.max_steering_correction', 0.6)
+        self.declare_parameter('lidar_safety.minimum_speed_scale', 0.25)
+        self.declare_parameter('lidar_safety.minimum_steering_correction', 0.5)
+        self.declare_parameter('lidar_safety.recovery_hold_steps', 12)
         self.declare_parameter('debug', False)
 
         # --- Initialization ---
@@ -46,6 +62,30 @@ class PilotNetNode(Node):
         color_space = self.get_parameter('model.color_space').value
         crop_top_ratio = self.get_parameter('model.crop_top_ratio').value
         crop_bottom_ratio = self.get_parameter('model.crop_bottom_ratio').value
+        self.speed_control_enabled = self.get_parameter('speed_control.enabled').value
+
+        self.speed_controller = SpeedController(
+            target_speed_mps=self.get_parameter('speed_control.target_speed_mps').value,
+            proportional_gain=self.get_parameter('speed_control.proportional_gain').value,
+            min_acceleration=self.get_parameter('speed_control.min_acceleration').value,
+            max_acceleration=self.get_parameter('speed_control.max_acceleration').value,
+        )
+        self.current_speed_mps = None
+        self.lidar_safety_enabled = self.get_parameter('lidar_safety.enabled').value
+        self.lidar_safety = LidarSafetyController(
+            activation_distance_m=self.get_parameter('lidar_safety.activation_distance_m').value,
+            stop_distance_m=self.get_parameter('lidar_safety.stop_distance_m').value,
+            max_steering_correction=self.get_parameter('lidar_safety.max_steering_correction').value,
+            minimum_speed_scale=self.get_parameter('lidar_safety.minimum_speed_scale').value,
+            minimum_steering_correction=self.get_parameter(
+                'lidar_safety.minimum_steering_correction'
+            ).value,
+            recovery_hold_steps=self.get_parameter(
+                'lidar_safety.recovery_hold_steps'
+            ).value,
+        )
+        self.speed_scale = 1.0
+        self.steering_correction = 0.0
 
         self.debug = self.get_parameter('debug').value
         self.log_interval = self.get_parameter('log_interval_sec').value
@@ -85,11 +125,38 @@ class PilotNetNode(Node):
         self.sub_image = self.create_subscription(
             Image, "/image_raw", self.image_callback, qos
         )
+        self.sub_velocity = self.create_subscription(
+            VelocityReport,
+            "/vehicle/status/velocity_status",
+            self.velocity_callback,
+            qos,
+        )
+        self.sub_scan = self.create_subscription(
+            LaserScan,
+            "/scan",
+            self.scan_callback,
+            qos,
+        )
         self.pub_control = self.create_publisher(
             AckermannControlCommand, "/control/command/control_cmd", 1
         )
 
         self.get_logger().info("PilotNetNode is ready.")
+
+    def velocity_callback(self, msg: VelocityReport):
+        """Store the latest wheel-odometry speed for longitudinal control."""
+        self.current_speed_mps = float(msg.longitudinal_velocity)
+
+    def scan_callback(self, msg: LaserScan):
+        """Update the limited safety residual from the latest LiDAR scan."""
+        if not self.lidar_safety_enabled:
+            self.speed_scale = 1.0
+            self.steering_correction = 0.0
+            return
+        angles = msg.angle_min + np.arange(len(msg.ranges)) * msg.angle_increment
+        self.speed_scale, self.steering_correction, _ = self.lidar_safety.compute(
+            msg.ranges, angles, msg.range_min, msg.range_max
+        )
 
     def image_callback(self, msg: Image):
         """Callback for Image subscription."""
@@ -102,6 +169,15 @@ class PilotNetNode(Node):
 
         # 2. Process via Core Logic
         accel, steer = self.core.process(image)
+        if self.speed_control_enabled:
+            if self.current_speed_mps is None:
+                accel = 0.0
+            else:
+                target_speed = self.speed_controller.target_speed_mps * self.speed_scale
+                accel = self.speed_controller.compute(
+                    self.current_speed_mps, target_speed_mps=target_speed
+                )
+        steer = float(np.clip(steer + self.steering_correction, -1.0, 1.0))
 
         # 3. Publish Command
         cmd = AckermannControlCommand()

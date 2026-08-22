@@ -33,6 +33,7 @@ make eval → run_evaluation.bash → evaluation.launch.xml
 | `dev.sh` | 開発 / S2R 練習 | 車両数 N（既定 1） | unlimited laps・timeout / count開始 / handicap・wall-recovery・ranking off / camera・lidar off |
 | `parallel.sh` | 複数台レース | - | 3台 / 6 laps / 600s / sync開始 / handicap・ranking・start-random off / wall-recovery off |
 | `e2e.sh` | E2E 練習兼提出参考 | - | 1台 + NPC 2体 / 6 laps / timeout 実質なし / count開始（0秒） / start-random on / handicap・ranking off / camera・lidar cpu |
+| `e2e-no-npc.sh` | E2E制御の診断 | - | `e2e.sh`からNPCだけを除外。走路追従と対NPC安全性の切り分け用 |
 | `e2e-final.sh` | E2E 決勝 | - | 4台 / 6 laps / 420s / sync開始 / handicap・ranking on / camera・lidar cpu / sound on |
 | `s2r-final.sh` | S2R 決勝 | - | 4台 / 6 laps / 420s / sync開始 / handicap・ranking on / camera・lidar off / sound on |
 | `gate.sh` | Safety Gate テスト | テスト番号 1/2/3/all（既定 all） | 1台。all は test1〜3 を順次実行 |
