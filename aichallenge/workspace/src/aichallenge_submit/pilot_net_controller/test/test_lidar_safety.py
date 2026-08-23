@@ -57,3 +57,18 @@ def test_holds_the_recovery_turn_after_front_becomes_clear():
     _, held_correction, _ = controller.compute(clear, angles, 0.05, 25.0)
     assert first_correction <= -0.5
     assert held_correction == pytest.approx(first_correction)
+
+
+def test_forced_recovery_turns_even_when_front_looks_clear():
+    controller = make_controller()
+    ranges, angles = scan(front=10.0, left=0.5, right=5.0)
+    scale, correction, clearance = controller.compute(
+        ranges,
+        angles,
+        0.05,
+        25.0,
+        force_recovery=True,
+    )
+    assert clearance == pytest.approx(10.0)
+    assert scale == pytest.approx(0.25)
+    assert correction < 0.0

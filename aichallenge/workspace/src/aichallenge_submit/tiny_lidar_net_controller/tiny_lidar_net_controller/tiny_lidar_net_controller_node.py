@@ -12,6 +12,8 @@ from autoware_auto_vehicle_msgs.msg import VelocityReport
 from tiny_lidar_net_controller_core import TinyLidarNetCore
 from tiny_lidar_net_controller.speed_controller import (
     SpeedController,
+    StuckDetector,
+    TimeToCollisionGovernor,
     calculate_forward_clearance,
     select_target_speed,
 )
@@ -42,10 +44,24 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('speed_control.proportional_gain', 0.8)
         self.declare_parameter('speed_control.min_acceleration', -0.2)
         self.declare_parameter('speed_control.max_acceleration', 0.6)
+        self.declare_parameter('speed_control.adaptive_braking_enabled', False)
+        self.declare_parameter('speed_control.hard_braking_threshold_mps', 0.3)
+        self.declare_parameter('speed_control.hard_min_acceleration', -0.6)
         self.declare_parameter('speed_control.straight_boost_enabled', True)
         self.declare_parameter('speed_control.straight_speed_mps', 2.75)
         self.declare_parameter('speed_control.max_straight_steering', 0.08)
         self.declare_parameter('speed_control.minimum_straight_clearance_m', 12.0)
+        self.declare_parameter('speed_control.predictive_slowdown_enabled', True)
+        self.declare_parameter('speed_control.activation_ttc_sec', 3.0)
+        self.declare_parameter('speed_control.minimum_ttc_sec', 1.5)
+        self.declare_parameter('speed_control.predictive_minimum_speed_scale', 0.6)
+        self.declare_parameter('speed_control.minimum_closing_speed_mps', 0.5)
+        self.declare_parameter('speed_control.ttc_rate_history_size', 3)
+        self.declare_parameter('speed_control.ttc_hold_steps', 5)
+        self.declare_parameter('stuck_recovery.enabled', True)
+        self.declare_parameter('stuck_recovery.stopped_speed_mps', 0.2)
+        self.declare_parameter('stuck_recovery.moving_speed_mps', 0.8)
+        self.declare_parameter('stuck_recovery.trigger_duration_sec', 2.0)
         self.declare_parameter('lidar_safety.enabled', True)
         self.declare_parameter('lidar_safety.activation_distance_m', 4.0)
         self.declare_parameter('lidar_safety.stop_distance_m', 0.5)
@@ -64,11 +80,22 @@ class TinyLidarNetNode(Node):
         acceleration = self.get_parameter('acceleration').value
         control_mode = self.get_parameter('control_mode').value
         self.speed_control_enabled = self.get_parameter('speed_control.enabled').value
+        adaptive_braking_enabled = self.get_parameter(
+            'speed_control.adaptive_braking_enabled'
+        ).value
         self.speed_controller = SpeedController(
             target_speed_mps=self.get_parameter('speed_control.target_speed_mps').value,
             proportional_gain=self.get_parameter('speed_control.proportional_gain').value,
             min_acceleration=self.get_parameter('speed_control.min_acceleration').value,
             max_acceleration=self.get_parameter('speed_control.max_acceleration').value,
+            hard_braking_threshold_mps=(
+                self.get_parameter('speed_control.hard_braking_threshold_mps').value
+                if adaptive_braking_enabled
+                else None
+            ),
+            hard_min_acceleration=self.get_parameter(
+                'speed_control.hard_min_acceleration'
+            ).value,
         )
         self.current_speed_mps = None
         self.straight_boost_enabled = self.get_parameter(
@@ -83,6 +110,40 @@ class TinyLidarNetNode(Node):
         self.minimum_straight_clearance_m = self.get_parameter(
             'speed_control.minimum_straight_clearance_m'
         ).value
+        self.predictive_slowdown_enabled = self.get_parameter(
+            'speed_control.predictive_slowdown_enabled'
+        ).value
+        self.ttc_governor = TimeToCollisionGovernor(
+            activation_ttc_sec=self.get_parameter(
+                'speed_control.activation_ttc_sec'
+            ).value,
+            minimum_ttc_sec=self.get_parameter('speed_control.minimum_ttc_sec').value,
+            minimum_speed_scale=self.get_parameter(
+                'speed_control.predictive_minimum_speed_scale'
+            ).value,
+            minimum_closing_speed_mps=self.get_parameter(
+                'speed_control.minimum_closing_speed_mps'
+            ).value,
+            rate_history_size=self.get_parameter(
+                'speed_control.ttc_rate_history_size'
+            ).value,
+            hold_steps=self.get_parameter('speed_control.ttc_hold_steps').value,
+        )
+        self.stuck_recovery_enabled = self.get_parameter(
+            'stuck_recovery.enabled'
+        ).value
+        self.stuck_detector = StuckDetector(
+            stopped_speed_mps=self.get_parameter(
+                'stuck_recovery.stopped_speed_mps'
+            ).value,
+            moving_speed_mps=self.get_parameter(
+                'stuck_recovery.moving_speed_mps'
+            ).value,
+            trigger_duration_sec=self.get_parameter(
+                'stuck_recovery.trigger_duration_sec'
+            ).value,
+        )
+        self.recovery_intervention_count = 0
         self.lidar_safety_enabled = self.get_parameter('lidar_safety.enabled').value
         self.lidar_safety = LidarSafetyController(
             activation_distance_m=self.get_parameter('lidar_safety.activation_distance_m').value,
@@ -159,8 +220,13 @@ class TinyLidarNetNode(Node):
         # 1. Convert ROS message to Numpy
         # We pass the raw array; the core logic handles NaN/Inf and normalization.
         ranges = np.array(msg.ranges, dtype=np.float32)
+        now_monotonic = time.monotonic()
         speed_scale = 1.0
         steering_correction = 0.0
+        force_recovery = (
+            self.stuck_recovery_enabled
+            and self.stuck_detector.compute(self.current_speed_mps, now_monotonic)
+        )
         angles = msg.angle_min + np.arange(len(ranges)) * msg.angle_increment
         front_clearance = calculate_forward_clearance(
             ranges,
@@ -170,8 +236,20 @@ class TinyLidarNetNode(Node):
         )
         if self.lidar_safety_enabled:
             speed_scale, steering_correction, _ = self.lidar_safety.compute(
-                ranges, angles, msg.range_min, msg.range_max
+                ranges,
+                angles,
+                msg.range_min,
+                msg.range_max,
+                force_recovery=force_recovery,
             )
+            if force_recovery:
+                self.recovery_intervention_count += 1
+        if self.predictive_slowdown_enabled:
+            predictive_scale = self.ttc_governor.compute(
+                front_clearance,
+                now_monotonic,
+            )
+            speed_scale = min(speed_scale, predictive_scale)
 
         # 2. Process via Core Logic
         accel, steer = self.core.process(ranges)
@@ -226,7 +304,10 @@ class TinyLidarNetNode(Node):
 
                 self.get_logger().info(
                     f"DEBUG: Avg Inference: {avg_time:.2f}ms ({fps:.2f}Hz) | "
-                    f"Max: {max_time:.2f}ms"
+                    f"Max: {max_time:.2f}ms | "
+                    f"TTC: {self.ttc_governor.last_ttc_sec:.2f}s | "
+                    f"TTC intervention: {self.ttc_governor.intervention_ratio:.1%} | "
+                    f"Recovery scans: {self.recovery_intervention_count}"
                 )
                 self.inference_times.clear()
             

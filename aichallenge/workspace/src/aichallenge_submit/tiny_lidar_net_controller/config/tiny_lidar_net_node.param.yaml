@@ -21,10 +21,32 @@
       proportional_gain: 0.8
       min_acceleration: -0.2
       max_acceleration: 0.6
+      adaptive_braking_enabled: false
+      hard_braking_threshold_mps: 0.3
+      hard_min_acceleration: -0.6
       straight_boost_enabled: true
       straight_speed_mps: 2.75
       max_straight_steering: 0.08
       minimum_straight_clearance_m: 12.0
+      # Predict closing motion from consecutive front LiDAR scans.  This slows
+      # before the 4 m reactive safety zone when a corner or NPC approaches
+      # quickly, while leaving steady clear-road driving unchanged.
+      predictive_slowdown_enabled: false
+      activation_ttc_sec: 3.0
+      minimum_ttc_sec: 1.5
+      predictive_minimum_speed_scale: 0.6
+      minimum_closing_speed_mps: 0.5
+      ttc_rate_history_size: 3
+      ttc_hold_steps: 5
+
+    # If a vehicle that was already moving stays almost stationary, the close
+    # range residual is forced even when a side contact makes the front sector
+    # look clear.  Initial launch is excluded until moving speed was observed.
+    stuck_recovery:
+      enabled: false
+      stopped_speed_mps: 0.2
+      moving_speed_mps: 0.8
+      trigger_duration_sec: 2.0
 
     # The neural steering remains primary.  This residual acts only when the
     # forward sector is blocked, then holds the open-side turn briefly so that

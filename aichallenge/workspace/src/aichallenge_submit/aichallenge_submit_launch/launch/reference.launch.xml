@@ -157,6 +157,19 @@
     </include>
   </group>
 
+  <!-- DAgger collection: TinyLiDARNet drives while MPC publishes shadow labels. -->
+  <group if="$(eval &quot;'$(var control_method)' == 'tiny_lidar_dagger'&quot;)">
+    <include file="$(find-pkg-share aichallenge_submit_launch)/launch/control/tiny_lidar_net.launch.xml">
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    </include>
+    <include file="$(find-pkg-share aichallenge_submit_launch)/launch/control/mpc.launch.xml">
+      <arg name="use_sim_time" value="$(var use_sim_time)"/>
+      <arg name="track" value="$(var track)"/>
+      <arg name="control_cmd_topic" value="/teacher/control_cmd"/>
+      <arg name="control_cmd_raw_topic" value="/teacher/control_cmd_raw"/>
+    </include>
+  </group>
+
   <group if="$(eval &quot;'$(var control_method)' == 'pilot_net'&quot;)">
     <include file="$(find-pkg-share aichallenge_submit_launch)/launch/control/pilot_net.launch.xml">
       <arg name="use_sim_time" value="$(var use_sim_time)"/>

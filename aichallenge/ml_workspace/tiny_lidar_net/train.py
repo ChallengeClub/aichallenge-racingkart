@@ -7,10 +7,28 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import numpy as np
 
 from lib.model import TinyLidarNet, TinyLidarNetSmall
 from lib.data import MultiSeqConcatDataset
 from lib.loss import WeightedSmoothL1Loss
+
+
+def load_pretrained_weights(model: torch.nn.Module, path: str) -> None:
+    """Load either a training checkpoint or deployment NumPy weights."""
+    checkpoint = Path(path)
+    if checkpoint.suffix in {".npy", ".npz"}:
+        loaded = np.load(checkpoint, allow_pickle=True)
+        params = dict(loaded.items()) if isinstance(loaded, np.lib.npyio.NpzFile) else loaded.item()
+        state = {}
+        for name, value in params.items():
+            if "_" not in name:
+                continue
+            module, parameter = name.rsplit("_", 1)
+            state[f"{module}.{parameter}"] = torch.from_numpy(value)
+        model.load_state_dict(state, strict=True)
+    else:
+        model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
 
 
 
@@ -65,15 +83,23 @@ def main(cfg: DictConfig):
         ).to(device)
 
     if cfg.train.pretrained_path:
-        model.load_state_dict(torch.load(cfg.train.pretrained_path))
+        load_pretrained_weights(model, cfg.train.pretrained_path)
         print(f"[INFO] Loaded pretrained model from {cfg.train.pretrained_path}")
+    if cfg.train.get("freeze_feature_extractor", False):
+        for name, parameter in model.named_parameters():
+            if name.startswith("conv"):
+                parameter.requires_grad = False
+        print("[INFO] Frozen convolutional feature extractor")
 
     # === Loss & Optimizer ===
     criterion = WeightedSmoothL1Loss(
         steer_weight=cfg.train.loss.steer_weight,
         accel_weight=cfg.train.loss.accel_weight
     )
-    optimizer = optim.Adam(model.parameters(), lr=cfg.train.lr)
+    optimizer = optim.Adam(
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=cfg.train.lr,
+    )
 
     # === Logging & Save dirs ===
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

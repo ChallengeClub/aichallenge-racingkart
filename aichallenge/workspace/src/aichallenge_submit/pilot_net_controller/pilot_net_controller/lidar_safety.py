@@ -45,7 +45,14 @@ class LidarSafetyController:
             return fallback
         return float(np.quantile(values, 0.2))
 
-    def compute(self, ranges, angles, range_min: float, range_max: float):
+    def compute(
+        self,
+        ranges,
+        angles,
+        range_min: float,
+        range_max: float,
+        force_recovery: bool = False,
+    ):
         ranges = np.asarray(ranges, dtype=np.float32)
         angles = np.asarray(angles, dtype=np.float32)
         valid = (
@@ -60,7 +67,7 @@ class LidarSafetyController:
         front_clearance = self._clearance(
             ranges, front, self.activation_distance_m
         )
-        if front_clearance >= self.activation_distance_m:
+        if front_clearance >= self.activation_distance_m and not force_recovery:
             if self._hold_remaining > 0:
                 self._hold_remaining -= 1
                 return (
@@ -76,15 +83,22 @@ class LidarSafetyController:
             left_clearance + right_clearance, 1e-6
         )
         if abs(open_side_ratio) < 1e-3:
-            steering_correction = self._held_correction
+            # During forced recovery, a deterministic fallback is preferable
+            # to repeatedly commanding straight into an unseen side contact.
+            steering_correction = self._held_correction or (
+                self.minimum_steering_correction if force_recovery else 0.0
+            )
         else:
             magnitude = max(
                 self.minimum_steering_correction,
                 self.max_steering_correction * abs(open_side_ratio),
             )
             steering_correction = math.copysign(magnitude, open_side_ratio)
-        speed_scale = (front_clearance - self.stop_distance_m) / (
-            self.activation_distance_m - self.stop_distance_m
+        speed_scale = (
+            self.minimum_speed_scale
+            if force_recovery
+            else (front_clearance - self.stop_distance_m)
+            / (self.activation_distance_m - self.stop_distance_m)
         )
         speed_scale = float(np.clip(speed_scale, self.minimum_speed_scale, 1.0))
         self._hold_remaining = self.recovery_hold_steps

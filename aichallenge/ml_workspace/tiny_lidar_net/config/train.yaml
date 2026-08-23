@@ -21,6 +21,7 @@ train:
 
   # 事前学習済みモデルのパス（指定しない場合は null）
   pretrained_path: null
+  freeze_feature_extractor: false
 
   # 保存先設定
   save_dir: "/aichallenge/ml_workspace/tiny_lidar_net/checkpoints"
