@@ -15,7 +15,9 @@ from tiny_lidar_net_controller.speed_controller import (
     StuckDetector,
     TimeToCollisionGovernor,
     calculate_forward_clearance,
+    detect_compact_forward_obstacle,
     select_target_speed,
+    should_activate_predictive_avoidance,
 )
 from pilot_net_controller.lidar_safety import LidarSafetyController
 
@@ -55,6 +57,8 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('speed_control.activation_ttc_sec', 3.0)
         self.declare_parameter('speed_control.minimum_ttc_sec', 1.5)
         self.declare_parameter('speed_control.predictive_minimum_speed_scale', 0.6)
+        self.declare_parameter('speed_control.predictive_avoidance_distance_m', 6.0)
+        self.declare_parameter('speed_control.predictive_avoidance_max_steering', 0.08)
         self.declare_parameter('speed_control.minimum_closing_speed_mps', 0.5)
         self.declare_parameter('speed_control.ttc_rate_history_size', 3)
         self.declare_parameter('speed_control.ttc_hold_steps', 5)
@@ -129,6 +133,12 @@ class TinyLidarNetNode(Node):
             ).value,
             hold_steps=self.get_parameter('speed_control.ttc_hold_steps').value,
         )
+        self.predictive_avoidance_distance_m = self.get_parameter(
+            'speed_control.predictive_avoidance_distance_m'
+        ).value
+        self.predictive_avoidance_max_steering = self.get_parameter(
+            'speed_control.predictive_avoidance_max_steering'
+        ).value
         self.stuck_recovery_enabled = self.get_parameter(
             'stuck_recovery.enabled'
         ).value
@@ -234,6 +244,33 @@ class TinyLidarNetNode(Node):
             range_min=msg.range_min,
             range_max=msg.range_max,
         )
+        # Infer the nominal steering before applying safety residuals.  Early
+        # avoidance is only appropriate on an otherwise straight path; on a
+        # curve, rapidly changing wall ranges are not evidence of an NPC.
+        accel, steer = self.core.process(ranges)
+        predictive_scale = 1.0
+        compact_obstacle_detected = False
+        if self.predictive_slowdown_enabled:
+            predictive_scale = self.ttc_governor.compute(
+                front_clearance,
+                now_monotonic,
+            )
+            speed_scale = min(speed_scale, predictive_scale)
+            compact_obstacle_detected = detect_compact_forward_obstacle(
+                ranges,
+                angles,
+                range_min=msg.range_min,
+                range_max=msg.range_max,
+                maximum_distance_m=self.predictive_avoidance_distance_m,
+            )
+        early_avoidance = should_activate_predictive_avoidance(
+            predictive_scale=predictive_scale,
+            front_clearance_m=front_clearance,
+            maximum_distance_m=self.predictive_avoidance_distance_m,
+            steering_angle=steer,
+            maximum_steering=self.predictive_avoidance_max_steering,
+            compact_obstacle_detected=compact_obstacle_detected,
+        )
         if self.lidar_safety_enabled:
             speed_scale, steering_correction, _ = self.lidar_safety.compute(
                 ranges,
@@ -241,18 +278,13 @@ class TinyLidarNetNode(Node):
                 msg.range_min,
                 msg.range_max,
                 force_recovery=force_recovery,
-            )
-            if force_recovery:
-                self.recovery_intervention_count += 1
-        if self.predictive_slowdown_enabled:
-            predictive_scale = self.ttc_governor.compute(
-                front_clearance,
-                now_monotonic,
+                early_activation=early_avoidance,
             )
             speed_scale = min(speed_scale, predictive_scale)
+            if force_recovery:
+                self.recovery_intervention_count += 1
 
-        # 2. Process via Core Logic
-        accel, steer = self.core.process(ranges)
+        # 2. Apply longitudinal control and the lateral safety residual.
         if self.speed_control_enabled:
             accel = (
                 0.0

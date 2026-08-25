@@ -9,7 +9,9 @@ from tiny_lidar_net_controller.speed_controller import (
     StuckDetector,
     TimeToCollisionGovernor,
     calculate_forward_clearance,
+    detect_compact_forward_obstacle,
     select_target_speed,
+    should_activate_predictive_avoidance,
 )
 
 
@@ -130,6 +132,49 @@ def test_ttc_governor_does_not_react_to_a_single_range_jump():
     assert governor.compute(8.0, 0.2) == pytest.approx(1.0)
 
 
+def test_predictive_avoidance_requires_a_straight_closing_path():
+    common = {
+        "predictive_scale": 0.5,
+        "front_clearance_m": 5.0,
+        "maximum_distance_m": 6.0,
+        "maximum_steering": 0.08,
+    }
+    assert should_activate_predictive_avoidance(steering_angle=0.04, **common)
+    assert not should_activate_predictive_avoidance(steering_angle=0.2, **common)
+    assert not should_activate_predictive_avoidance(
+        steering_angle=0.04,
+        **{**common, "predictive_scale": 1.0},
+    )
+    assert not should_activate_predictive_avoidance(
+        steering_angle=0.04,
+        compact_obstacle_detected=False,
+        **common,
+    )
+
+
+def test_compact_obstacle_detector_accepts_isolated_cluster_and_rejects_wall():
+    angles = np.linspace(-math.pi / 4, math.pi / 4, 181)
+    cluster = np.full(angles.shape, 20.0)
+    cluster[np.abs(angles) <= math.radians(7.0)] = 5.0
+    assert detect_compact_forward_obstacle(
+        cluster,
+        angles,
+        range_min=0.05,
+        range_max=25.0,
+        maximum_distance_m=6.0,
+    )
+
+    wall = np.full(angles.shape, 20.0)
+    wall[np.abs(angles) <= math.radians(35.0)] = 5.0
+    assert not detect_compact_forward_obstacle(
+        wall,
+        angles,
+        range_min=0.05,
+        range_max=25.0,
+        maximum_distance_m=6.0,
+    )
+
+
 def test_ttc_governor_slows_for_sustained_fast_approach():
     governor = ttc_governor()
     scales = [
@@ -139,6 +184,20 @@ def test_ttc_governor_slows_for_sustained_fast_approach():
     assert scales[-1] < 1.0
     assert governor.last_ttc_sec == pytest.approx(2.2)
     assert governor.intervention_ratio == pytest.approx(0.25)
+
+
+def test_ttc_governor_can_command_a_full_yield_stop():
+    governor = ttc_governor(
+        activation_ttc_sec=2.5,
+        minimum_ttc_sec=1.0,
+        minimum_speed_scale=0.0,
+    )
+    scales = [
+        governor.compute(clearance, index * 0.1)
+        for index, clearance in enumerate([4.0, 3.5, 3.0, 2.5])
+    ]
+    assert governor.last_ttc_sec == pytest.approx(0.5)
+    assert scales[-1] == pytest.approx(0.0)
 
 
 def test_ttc_governor_ignores_slow_clearance_drift():

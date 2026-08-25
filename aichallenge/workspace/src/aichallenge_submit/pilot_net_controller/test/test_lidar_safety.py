@@ -72,3 +72,23 @@ def test_forced_recovery_turns_even_when_front_looks_clear():
     assert clearance == pytest.approx(10.0)
     assert scale == pytest.approx(0.25)
     assert correction < 0.0
+
+
+def test_early_activation_steers_before_reactive_distance():
+    controller = LidarSafetyController(
+        activation_distance_m=4.0,
+        stop_distance_m=0.5,
+        max_steering_correction=0.6,
+        minimum_speed_scale=0.25,
+    )
+    ranges, angles = scan(front=5.5, left=5.0, right=1.0)
+    scale, correction, clearance = controller.compute(
+        ranges,
+        angles,
+        0.05,
+        25.0,
+        early_activation=True,
+    )
+    assert clearance == pytest.approx(5.5)
+    assert scale == pytest.approx(1.0)
+    assert correction > 0.0

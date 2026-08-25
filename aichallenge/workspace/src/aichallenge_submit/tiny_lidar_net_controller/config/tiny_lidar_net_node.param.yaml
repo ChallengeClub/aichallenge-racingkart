@@ -28,13 +28,14 @@
       straight_speed_mps: 2.75
       max_straight_steering: 0.08
       minimum_straight_clearance_m: 12.0
-      # Predict closing motion from consecutive front LiDAR scans.  This slows
-      # before the 4 m reactive safety zone when a corner or NPC approaches
-      # quickly, while leaving steady clear-road driving unchanged.
+      # Experimental predictive yield/avoidance remains available but disabled
+      # because the NPC E2E stability gate was not met.
       predictive_slowdown_enabled: false
       activation_ttc_sec: 3.0
       minimum_ttc_sec: 1.5
       predictive_minimum_speed_scale: 0.6
+      predictive_avoidance_distance_m: 6.0
+      predictive_avoidance_max_steering: 0.08
       minimum_closing_speed_mps: 0.5
       ttc_rate_history_size: 3
       ttc_hold_steps: 5

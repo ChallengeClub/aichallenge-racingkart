@@ -232,6 +232,70 @@ def select_target_speed(
     return max(0.0, float(cruise_speed) * safety_scale)
 
 
+def should_activate_predictive_avoidance(
+    *,
+    predictive_scale: float,
+    front_clearance_m: float,
+    maximum_distance_m: float,
+    steering_angle: float,
+    maximum_steering: float,
+    compact_obstacle_detected: bool = True,
+) -> bool:
+    """Activate early lateral avoidance only on a nominally straight path."""
+    return (
+        float(predictive_scale) < 1.0
+        and float(front_clearance_m) <= float(maximum_distance_m)
+        and abs(float(steering_angle)) <= float(maximum_steering)
+        and bool(compact_obstacle_detected)
+    )
+
+
+def detect_compact_forward_obstacle(
+    ranges,
+    angles,
+    *,
+    range_min: float,
+    range_max: float,
+    maximum_distance_m: float,
+    half_angle_deg: float = 45.0,
+    minimum_span_deg: float = 2.0,
+    maximum_span_deg: float = 30.0,
+    minimum_boundary_jump_m: float = 1.0,
+) -> bool:
+    """Detect an isolated LiDAR cluster while rejecting broad wall surfaces."""
+    ranges = np.asarray(ranges, dtype=np.float32)
+    angles = np.asarray(angles, dtype=np.float32)
+    usable = np.where(np.isposinf(ranges), float(range_max), ranges)
+    sector = (
+        np.isfinite(usable)
+        & (usable >= float(range_min))
+        & (usable <= float(range_max))
+        & (np.abs(angles) <= math.radians(half_angle_deg))
+    )
+    near_indices = np.flatnonzero(sector & (usable <= float(maximum_distance_m)))
+    if near_indices.size == 0:
+        return False
+
+    runs = np.split(near_indices, np.flatnonzero(np.diff(near_indices) > 1) + 1)
+    angle_step = float(np.median(np.abs(np.diff(angles)))) if angles.size > 1 else 0.0
+    for run in runs:
+        start = int(run[0])
+        end = int(run[-1])
+        if start == 0 or end >= usable.size - 1:
+            continue
+        span_deg = math.degrees(abs(float(angles[end] - angles[start])) + angle_step)
+        if not minimum_span_deg <= span_deg <= maximum_span_deg:
+            continue
+        if not (sector[start - 1] and sector[end + 1]):
+            continue
+        cluster_distance = float(np.median(usable[run]))
+        left_jump = float(usable[start - 1]) - cluster_distance
+        right_jump = float(usable[end + 1]) - cluster_distance
+        if left_jump >= minimum_boundary_jump_m and right_jump >= minimum_boundary_jump_m:
+            return True
+    return False
+
+
 def calculate_forward_clearance(
     ranges,
     angles,

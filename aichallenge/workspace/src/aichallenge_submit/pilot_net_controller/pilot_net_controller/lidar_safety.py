@@ -52,6 +52,7 @@ class LidarSafetyController:
         range_min: float,
         range_max: float,
         force_recovery: bool = False,
+        early_activation: bool = False,
     ):
         ranges = np.asarray(ranges, dtype=np.float32)
         angles = np.asarray(angles, dtype=np.float32)
@@ -67,7 +68,11 @@ class LidarSafetyController:
         front_clearance = self._clearance(
             ranges, front, self.activation_distance_m
         )
-        if front_clearance >= self.activation_distance_m and not force_recovery:
+        if (
+            front_clearance >= self.activation_distance_m
+            and not force_recovery
+            and not early_activation
+        ):
             if self._hold_remaining > 0:
                 self._hold_remaining -= 1
                 return (
