@@ -21,6 +21,47 @@ class TrackedThreat:
     closing_speed_mps: float
     ttc_sec: float
     observations: int
+    lateral_separation_speed_mps: float = 0.0
+
+    @property
+    def lateral_offset_m(self) -> float:
+        """Absolute lateral offset of the obstacle center in vehicle coordinates."""
+        return abs(self.distance_m * math.sin(self.angle_rad))
+
+    def adaptive_speed_scale_exponent(
+        self,
+        *,
+        nominal_exponent: float,
+        passing_exponent: float,
+        minimum_lateral_offset_m: float,
+        minimum_lateral_separation_speed_mps: float,
+        minimum_distance_m: float,
+    ) -> float:
+        """Relax slowdown only after a tracked obstacle is moving laterally away."""
+        safely_passing = (
+            self.distance_m >= float(minimum_distance_m)
+            and self.lateral_offset_m >= float(minimum_lateral_offset_m)
+            and self.lateral_separation_speed_mps
+            >= float(minimum_lateral_separation_speed_mps)
+        )
+        return float(passing_exponent if safely_passing else nominal_exponent)
+
+    def is_safely_passing(
+        self,
+        *,
+        minimum_lateral_offset_m: float,
+        minimum_lateral_separation_speed_mps: float,
+        minimum_distance_m: float,
+        minimum_ttc_sec: float,
+    ) -> bool:
+        """Return whether geometry supports a conservative passing state."""
+        return (
+            self.distance_m >= float(minimum_distance_m)
+            and self.ttc_sec >= float(minimum_ttc_sec)
+            and self.lateral_offset_m >= float(minimum_lateral_offset_m)
+            and self.lateral_separation_speed_mps
+            >= float(minimum_lateral_separation_speed_mps)
+        )
 
     def speed_scale(
         self,
@@ -28,10 +69,14 @@ class TrackedThreat:
         activation_ttc_sec: float,
         minimum_ttc_sec: float,
         minimum_speed_scale: float,
+        exponent: float = 1.0,
     ) -> float:
-        scale = (self.ttc_sec - minimum_ttc_sec) / (
+        if exponent <= 0.0:
+            raise ValueError("exponent must be positive")
+        linear_scale = (self.ttc_sec - minimum_ttc_sec) / (
             activation_ttc_sec - minimum_ttc_sec
         )
+        scale = np.clip(linear_scale, 0.0, 1.0) ** float(exponent)
         return float(np.clip(scale, minimum_speed_scale, 1.0))
 
 
@@ -40,6 +85,93 @@ class _Track:
     identifier: int
     history: deque = field(default_factory=lambda: deque(maxlen=6))
     missed_updates: int = 0
+
+
+class AdaptivePassingGate:
+    """Confirm safe passing geometry and bound any relaxed-speed interval."""
+
+    def __init__(
+        self,
+        *,
+        confirmation_updates: int = 5,
+        maximum_active_duration_sec: float = 0.8,
+        cooldown_sec: float = 1.0,
+        minimum_lateral_offset_m: float = 0.8,
+        minimum_lateral_separation_speed_mps: float = 0.2,
+        minimum_distance_m: float = 2.5,
+        minimum_ttc_sec: float = 1.8,
+    ) -> None:
+        self.confirmation_updates = max(1, int(confirmation_updates))
+        self.maximum_active_duration_sec = max(
+            0.0, float(maximum_active_duration_sec)
+        )
+        self.cooldown_sec = max(0.0, float(cooldown_sec))
+        self.minimum_lateral_offset_m = float(minimum_lateral_offset_m)
+        self.minimum_lateral_separation_speed_mps = float(
+            minimum_lateral_separation_speed_mps
+        )
+        self.minimum_distance_m = float(minimum_distance_m)
+        self.minimum_ttc_sec = float(minimum_ttc_sec)
+        self._confirmation_count = 0
+        self._active_since = None
+        self._cooldown_until = None
+        self.activation_count = 0
+        self.active_update_count = 0
+
+    @property
+    def active(self) -> bool:
+        return self._active_since is not None
+
+    def reset(self) -> None:
+        self._confirmation_count = 0
+        self._active_since = None
+        self._cooldown_until = None
+
+    def _eligible(self, threat: TrackedThreat | None) -> bool:
+        return threat is not None and threat.is_safely_passing(
+            minimum_lateral_offset_m=self.minimum_lateral_offset_m,
+            minimum_lateral_separation_speed_mps=(
+                self.minimum_lateral_separation_speed_mps
+            ),
+            minimum_distance_m=self.minimum_distance_m,
+            minimum_ttc_sec=self.minimum_ttc_sec,
+        )
+
+    def _deactivate(self, now: float) -> None:
+        self._active_since = None
+        self._confirmation_count = 0
+        self._cooldown_until = now + self.cooldown_sec
+
+    def update(self, threat: TrackedThreat | None, timestamp_sec: float) -> bool:
+        now = float(timestamp_sec)
+        eligible = self._eligible(threat)
+
+        if self.active:
+            expired = (
+                now - self._active_since >= self.maximum_active_duration_sec
+            )
+            if not eligible or expired:
+                self._deactivate(now)
+                return False
+            self.active_update_count += 1
+            return True
+
+        if self._cooldown_until is not None and now < self._cooldown_until:
+            self._confirmation_count = 0
+            return False
+        if not eligible:
+            self._confirmation_count = 0
+            return False
+
+        self._confirmation_count += 1
+        if self._confirmation_count < self.confirmation_updates:
+            return False
+
+        self._confirmation_count = 0
+        self._active_since = now
+        self.activation_count += 1
+        self.active_update_count += 1
+        return True
 
 
 def extract_compact_obstacles(
@@ -208,6 +340,10 @@ class LidarObstacleTracker:
             closing_speed = (first.distance_m - last.distance_m) / elapsed
             if closing_speed < self.minimum_closing_speed_mps:
                 continue
+            first_lateral_offset = abs(
+                first.distance_m * math.sin(first.angle_rad)
+            )
+            last_lateral_offset = abs(last.distance_m * math.sin(last.angle_rad))
             threats.append(
                 TrackedThreat(
                     angle_rad=last.angle_rad,
@@ -215,6 +351,10 @@ class LidarObstacleTracker:
                     closing_speed_mps=closing_speed,
                     ttc_sec=last.distance_m / max(closing_speed, 1e-6),
                     observations=len(track.history),
+                    lateral_separation_speed_mps=(
+                        last_lateral_offset - first_lateral_offset
+                    )
+                    / elapsed,
                 )
             )
 

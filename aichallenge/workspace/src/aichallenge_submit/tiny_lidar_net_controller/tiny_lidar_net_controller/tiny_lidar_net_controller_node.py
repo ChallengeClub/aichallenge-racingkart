@@ -19,7 +19,10 @@ from tiny_lidar_net_controller.speed_controller import (
     select_target_speed,
     should_activate_predictive_avoidance,
 )
-from tiny_lidar_net_controller.obstacle_tracker import LidarObstacleTracker
+from tiny_lidar_net_controller.obstacle_tracker import (
+    AdaptivePassingGate,
+    LidarObstacleTracker,
+)
 from pilot_net_controller.lidar_safety import LidarSafetyController
 
 
@@ -75,6 +78,18 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('npc_tracker.activation_ttc_sec', 3.0)
         self.declare_parameter('npc_tracker.minimum_ttc_sec', 1.2)
         self.declare_parameter('npc_tracker.minimum_speed_scale', 0.35)
+        self.declare_parameter('npc_tracker.speed_scale_exponent', 1.0)
+        self.declare_parameter('npc_tracker.adaptive_speed_scale_enabled', False)
+        self.declare_parameter('npc_tracker.passing_speed_scale_exponent', 0.75)
+        self.declare_parameter('npc_tracker.minimum_lateral_offset_m', 0.8)
+        self.declare_parameter(
+            'npc_tracker.minimum_lateral_separation_speed_mps', 0.2
+        )
+        self.declare_parameter('npc_tracker.adaptive_minimum_distance_m', 2.5)
+        self.declare_parameter('npc_tracker.adaptive_confirmation_updates', 5)
+        self.declare_parameter('npc_tracker.adaptive_maximum_duration_sec', 0.8)
+        self.declare_parameter('npc_tracker.adaptive_cooldown_sec', 1.0)
+        self.declare_parameter('npc_tracker.adaptive_minimum_ttc_sec', 1.8)
         self.declare_parameter('stuck_recovery.enabled', True)
         self.declare_parameter('stuck_recovery.stopped_speed_mps', 0.2)
         self.declare_parameter('stuck_recovery.moving_speed_mps', 0.8)
@@ -186,6 +201,43 @@ class TinyLidarNetNode(Node):
         self.npc_tracker_minimum_speed_scale = self.get_parameter(
             'npc_tracker.minimum_speed_scale'
         ).value
+        self.npc_tracker_speed_scale_exponent = self.get_parameter(
+            'npc_tracker.speed_scale_exponent'
+        ).value
+        self.npc_tracker_adaptive_speed_scale_enabled = self.get_parameter(
+            'npc_tracker.adaptive_speed_scale_enabled'
+        ).value
+        self.npc_tracker_passing_speed_scale_exponent = self.get_parameter(
+            'npc_tracker.passing_speed_scale_exponent'
+        ).value
+        self.npc_tracker_minimum_lateral_offset_m = self.get_parameter(
+            'npc_tracker.minimum_lateral_offset_m'
+        ).value
+        self.npc_tracker_minimum_lateral_separation_speed_mps = self.get_parameter(
+            'npc_tracker.minimum_lateral_separation_speed_mps'
+        ).value
+        self.npc_tracker_adaptive_minimum_distance_m = self.get_parameter(
+            'npc_tracker.adaptive_minimum_distance_m'
+        ).value
+        self.npc_passing_gate = AdaptivePassingGate(
+            confirmation_updates=self.get_parameter(
+                'npc_tracker.adaptive_confirmation_updates'
+            ).value,
+            maximum_active_duration_sec=self.get_parameter(
+                'npc_tracker.adaptive_maximum_duration_sec'
+            ).value,
+            cooldown_sec=self.get_parameter(
+                'npc_tracker.adaptive_cooldown_sec'
+            ).value,
+            minimum_lateral_offset_m=self.npc_tracker_minimum_lateral_offset_m,
+            minimum_lateral_separation_speed_mps=(
+                self.npc_tracker_minimum_lateral_separation_speed_mps
+            ),
+            minimum_distance_m=self.npc_tracker_adaptive_minimum_distance_m,
+            minimum_ttc_sec=self.get_parameter(
+                'npc_tracker.adaptive_minimum_ttc_sec'
+            ).value,
+        )
         self.stuck_recovery_enabled = self.get_parameter(
             'stuck_recovery.enabled'
         ).value
@@ -328,11 +380,21 @@ class TinyLidarNetNode(Node):
                 range_max=msg.range_max,
                 timestamp_sec=now_monotonic,
             )
+            passing_active = False
+            if self.npc_tracker_adaptive_speed_scale_enabled:
+                passing_active = self.npc_passing_gate.update(
+                    tracked_threat,
+                    now_monotonic,
+                )
             if tracked_threat is not None:
+                scale_exponent = self.npc_tracker_speed_scale_exponent
+                if passing_active:
+                    scale_exponent = self.npc_tracker_passing_speed_scale_exponent
                 tracked_scale = tracked_threat.speed_scale(
                     activation_ttc_sec=self.npc_tracker_activation_ttc_sec,
                     minimum_ttc_sec=self.npc_tracker_minimum_ttc_sec,
                     minimum_speed_scale=self.npc_tracker_minimum_speed_scale,
+                    exponent=scale_exponent,
                 )
                 speed_scale = min(speed_scale, tracked_scale)
                 early_avoidance = True
@@ -406,6 +468,7 @@ class TinyLidarNetNode(Node):
                     f"TTC intervention: {self.ttc_governor.intervention_ratio:.1%} | "
                     f"Recovery scans: {self.recovery_intervention_count} | "
                     f"Tracked threats: {self.npc_tracker.confirmed_threat_count}"
+                    f" | Passing activations: {self.npc_passing_gate.activation_count}"
                 )
                 self.inference_times.clear()
             

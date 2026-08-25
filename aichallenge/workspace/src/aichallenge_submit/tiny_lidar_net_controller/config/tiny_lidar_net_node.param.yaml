@@ -56,6 +56,20 @@
       activation_ttc_sec: 3.0
       minimum_ttc_sec: 1.2
       minimum_speed_scale: 0.35
+      # 1.0 is the validated linear response. Values below 1.0 preserve more
+      # speed at moderate TTC, but the 0.5 prototype did not pass the 500 s gate.
+      speed_scale_exponent: 1.0
+      # Relax only when the tracked NPC is already offset from the path and
+      # continuing to move laterally away. Head-on and close threats stay linear.
+      adaptive_speed_scale_enabled: true
+      passing_speed_scale_exponent: 0.75
+      minimum_lateral_offset_m: 0.8
+      minimum_lateral_separation_speed_mps: 0.2
+      adaptive_minimum_distance_m: 2.5
+      adaptive_confirmation_updates: 5
+      adaptive_maximum_duration_sec: 0.8
+      adaptive_cooldown_sec: 1.0
+      adaptive_minimum_ttc_sec: 1.8
 
     # If a vehicle that was already moving stays almost stationary, the close
     # range residual is forced even when a side contact makes the front sector
