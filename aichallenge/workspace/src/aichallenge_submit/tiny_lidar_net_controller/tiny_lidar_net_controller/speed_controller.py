@@ -5,6 +5,8 @@ from collections import deque
 
 import numpy as np
 
+from tiny_lidar_net_controller.obstacle_tracker import extract_compact_obstacles
+
 
 class TimeToCollisionGovernor:
     """Reduce the speed target when forward clearance is closing too quickly.
@@ -263,37 +265,19 @@ def detect_compact_forward_obstacle(
     minimum_boundary_jump_m: float = 1.0,
 ) -> bool:
     """Detect an isolated LiDAR cluster while rejecting broad wall surfaces."""
-    ranges = np.asarray(ranges, dtype=np.float32)
-    angles = np.asarray(angles, dtype=np.float32)
-    usable = np.where(np.isposinf(ranges), float(range_max), ranges)
-    sector = (
-        np.isfinite(usable)
-        & (usable >= float(range_min))
-        & (usable <= float(range_max))
-        & (np.abs(angles) <= math.radians(half_angle_deg))
+    return bool(
+        extract_compact_obstacles(
+            ranges,
+            angles,
+            range_min=range_min,
+            range_max=range_max,
+            maximum_distance_m=maximum_distance_m,
+            half_angle_deg=half_angle_deg,
+            minimum_span_deg=minimum_span_deg,
+            maximum_span_deg=maximum_span_deg,
+            minimum_boundary_jump_m=minimum_boundary_jump_m,
+        )
     )
-    near_indices = np.flatnonzero(sector & (usable <= float(maximum_distance_m)))
-    if near_indices.size == 0:
-        return False
-
-    runs = np.split(near_indices, np.flatnonzero(np.diff(near_indices) > 1) + 1)
-    angle_step = float(np.median(np.abs(np.diff(angles)))) if angles.size > 1 else 0.0
-    for run in runs:
-        start = int(run[0])
-        end = int(run[-1])
-        if start == 0 or end >= usable.size - 1:
-            continue
-        span_deg = math.degrees(abs(float(angles[end] - angles[start])) + angle_step)
-        if not minimum_span_deg <= span_deg <= maximum_span_deg:
-            continue
-        if not (sector[start - 1] and sector[end + 1]):
-            continue
-        cluster_distance = float(np.median(usable[run]))
-        left_jump = float(usable[start - 1]) - cluster_distance
-        right_jump = float(usable[end + 1]) - cluster_distance
-        if left_jump >= minimum_boundary_jump_m and right_jump >= minimum_boundary_jump_m:
-            return True
-    return False
 
 
 def calculate_forward_clearance(

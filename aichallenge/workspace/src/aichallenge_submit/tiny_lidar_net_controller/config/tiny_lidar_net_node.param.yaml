@@ -21,7 +21,7 @@
       proportional_gain: 0.8
       min_acceleration: -0.2
       max_acceleration: 0.6
-      adaptive_braking_enabled: false
+      adaptive_braking_enabled: true
       hard_braking_threshold_mps: 0.3
       hard_min_acceleration: -0.6
       straight_boost_enabled: true
@@ -39,6 +39,23 @@
       minimum_closing_speed_mps: 0.5
       ttc_rate_history_size: 3
       ttc_hold_steps: 5
+
+    # Confirm compact obstacles over multiple scans before treating them as an
+    # NPC threat.  The adopted v2 also accepts a cluster with one visible edge
+    # because an NPC can overlap a wall in a curve.
+    npc_tracker:
+      enabled: true
+      maximum_distance_m: 6.0
+      confirmation_hits: 3
+      maximum_missed_updates: 2
+      association_angle_deg: 10.0
+      association_distance_m: 1.5
+      minimum_closing_speed_mps: 0.3
+      maximum_track_age_sec: 0.5
+      minimum_boundary_count: 1
+      activation_ttc_sec: 3.0
+      minimum_ttc_sec: 1.2
+      minimum_speed_scale: 0.35
 
     # If a vehicle that was already moving stays almost stationary, the close
     # range residual is forced even when a side contact makes the front sector

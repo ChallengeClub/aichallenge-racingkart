@@ -19,6 +19,7 @@ from tiny_lidar_net_controller.speed_controller import (
     select_target_speed,
     should_activate_predictive_avoidance,
 )
+from tiny_lidar_net_controller.obstacle_tracker import LidarObstacleTracker
 from pilot_net_controller.lidar_safety import LidarSafetyController
 
 
@@ -62,6 +63,18 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('speed_control.minimum_closing_speed_mps', 0.5)
         self.declare_parameter('speed_control.ttc_rate_history_size', 3)
         self.declare_parameter('speed_control.ttc_hold_steps', 5)
+        self.declare_parameter('npc_tracker.enabled', False)
+        self.declare_parameter('npc_tracker.maximum_distance_m', 6.0)
+        self.declare_parameter('npc_tracker.confirmation_hits', 3)
+        self.declare_parameter('npc_tracker.maximum_missed_updates', 2)
+        self.declare_parameter('npc_tracker.association_angle_deg', 10.0)
+        self.declare_parameter('npc_tracker.association_distance_m', 1.5)
+        self.declare_parameter('npc_tracker.minimum_closing_speed_mps', 0.3)
+        self.declare_parameter('npc_tracker.maximum_track_age_sec', 0.5)
+        self.declare_parameter('npc_tracker.minimum_boundary_count', 1)
+        self.declare_parameter('npc_tracker.activation_ttc_sec', 3.0)
+        self.declare_parameter('npc_tracker.minimum_ttc_sec', 1.2)
+        self.declare_parameter('npc_tracker.minimum_speed_scale', 0.35)
         self.declare_parameter('stuck_recovery.enabled', True)
         self.declare_parameter('stuck_recovery.stopped_speed_mps', 0.2)
         self.declare_parameter('stuck_recovery.moving_speed_mps', 0.8)
@@ -138,6 +151,40 @@ class TinyLidarNetNode(Node):
         ).value
         self.predictive_avoidance_max_steering = self.get_parameter(
             'speed_control.predictive_avoidance_max_steering'
+        ).value
+        self.npc_tracker_enabled = self.get_parameter('npc_tracker.enabled').value
+        self.npc_tracker = LidarObstacleTracker(
+            maximum_distance_m=self.get_parameter(
+                'npc_tracker.maximum_distance_m'
+            ).value,
+            confirmation_hits=self.get_parameter('npc_tracker.confirmation_hits').value,
+            maximum_missed_updates=self.get_parameter(
+                'npc_tracker.maximum_missed_updates'
+            ).value,
+            association_angle_deg=self.get_parameter(
+                'npc_tracker.association_angle_deg'
+            ).value,
+            association_distance_m=self.get_parameter(
+                'npc_tracker.association_distance_m'
+            ).value,
+            minimum_closing_speed_mps=self.get_parameter(
+                'npc_tracker.minimum_closing_speed_mps'
+            ).value,
+            maximum_track_age_sec=self.get_parameter(
+                'npc_tracker.maximum_track_age_sec'
+            ).value,
+            minimum_boundary_count=self.get_parameter(
+                'npc_tracker.minimum_boundary_count'
+            ).value,
+        )
+        self.npc_tracker_activation_ttc_sec = self.get_parameter(
+            'npc_tracker.activation_ttc_sec'
+        ).value
+        self.npc_tracker_minimum_ttc_sec = self.get_parameter(
+            'npc_tracker.minimum_ttc_sec'
+        ).value
+        self.npc_tracker_minimum_speed_scale = self.get_parameter(
+            'npc_tracker.minimum_speed_scale'
         ).value
         self.stuck_recovery_enabled = self.get_parameter(
             'stuck_recovery.enabled'
@@ -271,6 +318,24 @@ class TinyLidarNetNode(Node):
             maximum_steering=self.predictive_avoidance_max_steering,
             compact_obstacle_detected=compact_obstacle_detected,
         )
+        tracked_threat = None
+        tracked_scale = 1.0
+        if self.npc_tracker_enabled:
+            tracked_threat = self.npc_tracker.update(
+                ranges,
+                angles,
+                range_min=msg.range_min,
+                range_max=msg.range_max,
+                timestamp_sec=now_monotonic,
+            )
+            if tracked_threat is not None:
+                tracked_scale = tracked_threat.speed_scale(
+                    activation_ttc_sec=self.npc_tracker_activation_ttc_sec,
+                    minimum_ttc_sec=self.npc_tracker_minimum_ttc_sec,
+                    minimum_speed_scale=self.npc_tracker_minimum_speed_scale,
+                )
+                speed_scale = min(speed_scale, tracked_scale)
+                early_avoidance = True
         if self.lidar_safety_enabled:
             speed_scale, steering_correction, _ = self.lidar_safety.compute(
                 ranges,
@@ -280,7 +345,7 @@ class TinyLidarNetNode(Node):
                 force_recovery=force_recovery,
                 early_activation=early_avoidance,
             )
-            speed_scale = min(speed_scale, predictive_scale)
+            speed_scale = min(speed_scale, predictive_scale, tracked_scale)
             if force_recovery:
                 self.recovery_intervention_count += 1
 
@@ -339,7 +404,8 @@ class TinyLidarNetNode(Node):
                     f"Max: {max_time:.2f}ms | "
                     f"TTC: {self.ttc_governor.last_ttc_sec:.2f}s | "
                     f"TTC intervention: {self.ttc_governor.intervention_ratio:.1%} | "
-                    f"Recovery scans: {self.recovery_intervention_count}"
+                    f"Recovery scans: {self.recovery_intervention_count} | "
+                    f"Tracked threats: {self.npc_tracker.confirmed_threat_count}"
                 )
                 self.inference_times.clear()
             
