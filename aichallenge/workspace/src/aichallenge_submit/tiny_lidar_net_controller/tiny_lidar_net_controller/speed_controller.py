@@ -149,6 +149,190 @@ class StuckDetector:
         return now - self._stopped_since >= self.trigger_duration_sec
 
 
+class StraightBurstGate:
+    """Permit a bounded high-speed burst on a persistently open straight."""
+
+    def __init__(
+        self,
+        *,
+        confirmation_updates: int = 8,
+        maximum_active_duration_sec: float = 1.5,
+        cooldown_sec: float = 1.0,
+        entry_clearance_m: float = 20.0,
+        exit_clearance_m: float = 16.0,
+        entry_maximum_steering: float = 0.04,
+        exit_maximum_steering: float = 0.07,
+    ) -> None:
+        if exit_clearance_m > entry_clearance_m:
+            raise ValueError("exit_clearance_m must not exceed entry_clearance_m")
+        if exit_maximum_steering < entry_maximum_steering:
+            raise ValueError(
+                "exit_maximum_steering must not be below entry_maximum_steering"
+            )
+        self.confirmation_updates = max(1, int(confirmation_updates))
+        self.maximum_active_duration_sec = max(
+            0.0, float(maximum_active_duration_sec)
+        )
+        self.cooldown_sec = max(0.0, float(cooldown_sec))
+        self.entry_clearance_m = float(entry_clearance_m)
+        self.exit_clearance_m = float(exit_clearance_m)
+        self.entry_maximum_steering = float(entry_maximum_steering)
+        self.exit_maximum_steering = float(exit_maximum_steering)
+        self._confirmation_count = 0
+        self._active_since = None
+        self._cooldown_until = None
+        self.activation_count = 0
+        self.active_update_count = 0
+
+    @property
+    def active(self) -> bool:
+        return self._active_since is not None
+
+    def _entry_safe(
+        self,
+        steering_angle: float,
+        front_clearance_m: float,
+        safety_speed_scale: float,
+        obstacle_detected: bool,
+    ) -> bool:
+        return (
+            float(safety_speed_scale) >= 1.0
+            and not bool(obstacle_detected)
+            and abs(float(steering_angle)) <= self.entry_maximum_steering
+            and float(front_clearance_m) >= self.entry_clearance_m
+        )
+
+    def _remain_safe(
+        self,
+        steering_angle: float,
+        front_clearance_m: float,
+        safety_speed_scale: float,
+        obstacle_detected: bool,
+    ) -> bool:
+        return (
+            float(safety_speed_scale) >= 1.0
+            and not bool(obstacle_detected)
+            and abs(float(steering_angle)) <= self.exit_maximum_steering
+            and float(front_clearance_m) >= self.exit_clearance_m
+        )
+
+    def _deactivate(self, now: float) -> None:
+        self._confirmation_count = 0
+        self._active_since = None
+        self._cooldown_until = now + self.cooldown_sec
+
+    def update(
+        self,
+        *,
+        steering_angle: float,
+        front_clearance_m: float,
+        safety_speed_scale: float,
+        obstacle_detected: bool,
+        timestamp_sec: float,
+    ) -> bool:
+        now = float(timestamp_sec)
+        if self.active:
+            expired = (
+                now - self._active_since >= self.maximum_active_duration_sec
+            )
+            if expired or not self._remain_safe(
+                steering_angle,
+                front_clearance_m,
+                safety_speed_scale,
+                obstacle_detected,
+            ):
+                self._deactivate(now)
+                return False
+            self.active_update_count += 1
+            return True
+
+        if self._cooldown_until is not None and now < self._cooldown_until:
+            self._confirmation_count = 0
+            return False
+        if not self._entry_safe(
+            steering_angle,
+            front_clearance_m,
+            safety_speed_scale,
+            obstacle_detected,
+        ):
+            self._confirmation_count = 0
+            return False
+
+        self._confirmation_count += 1
+        if self._confirmation_count < self.confirmation_updates:
+            return False
+        self._confirmation_count = 0
+        self._active_since = now
+        self.activation_count += 1
+        self.active_update_count += 1
+        return True
+
+
+class SpeedConditionedSteeringAdapter:
+    """Add bounded steering gain and lead only while vehicle speed is high."""
+
+    def __init__(
+        self,
+        *,
+        activation_speed_mps: float = 2.5,
+        full_effect_speed_mps: float = 3.5,
+        proportional_gain: float = 0.18,
+        lead_gain: float = 0.35,
+        previous_steering_smoothing: float = 0.7,
+        minimum_steering_magnitude: float = 0.03,
+        maximum_correction: float = 0.12,
+    ) -> None:
+        if full_effect_speed_mps <= activation_speed_mps:
+            raise ValueError(
+                "full_effect_speed_mps must exceed activation_speed_mps"
+            )
+        self.activation_speed_mps = float(activation_speed_mps)
+        self.full_effect_speed_mps = float(full_effect_speed_mps)
+        self.proportional_gain = max(0.0, float(proportional_gain))
+        self.lead_gain = max(0.0, float(lead_gain))
+        self.previous_steering_smoothing = float(
+            np.clip(previous_steering_smoothing, 0.0, 1.0)
+        )
+        self.minimum_steering_magnitude = max(
+            0.0, float(minimum_steering_magnitude)
+        )
+        self.maximum_correction = max(0.0, float(maximum_correction))
+        self._smoothed_previous = None
+        self.intervention_count = 0
+
+    def reset(self) -> None:
+        self._smoothed_previous = None
+
+    def compute(self, steering_angle: float, speed_mps: float | None) -> float:
+        steering = float(steering_angle)
+        previous = steering if self._smoothed_previous is None else self._smoothed_previous
+        self._smoothed_previous = (
+            self.previous_steering_smoothing * previous
+            + (1.0 - self.previous_steering_smoothing) * steering
+        )
+
+        if speed_mps is None or abs(steering) < self.minimum_steering_magnitude:
+            return steering
+        speed = max(0.0, float(speed_mps))
+        blend = (speed - self.activation_speed_mps) / (
+            self.full_effect_speed_mps - self.activation_speed_mps
+        )
+        blend = float(np.clip(blend, 0.0, 1.0))
+        if blend <= 0.0:
+            return steering
+
+        trend = steering - previous
+        correction = blend * (
+            self.proportional_gain * steering + self.lead_gain * trend
+        )
+        correction = float(
+            np.clip(correction, -self.maximum_correction, self.maximum_correction)
+        )
+        if abs(correction) > 1e-6:
+            self.intervention_count += 1
+        return float(np.clip(steering + correction, -1.0, 1.0))
+
+
 class SpeedController:
     """Convert wheel-speed error into a bounded acceleration command."""
 

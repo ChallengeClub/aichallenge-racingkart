@@ -6,6 +6,8 @@ import numpy as np
 
 from tiny_lidar_net_controller.speed_controller import (
     SpeedController,
+    SpeedConditionedSteeringAdapter,
+    StraightBurstGate,
     StuckDetector,
     TimeToCollisionGovernor,
     calculate_forward_clearance,
@@ -245,3 +247,116 @@ def test_stuck_detector_clears_after_vehicle_moves_again():
     detector.compute(0.1, 1.0)
     assert detector.compute(0.1, 2.0)
     assert not detector.compute(1.0, 2.1)
+
+
+def burst_gate(**overrides):
+    parameters = dict(
+        confirmation_updates=3,
+        maximum_active_duration_sec=1.0,
+        cooldown_sec=0.5,
+        entry_clearance_m=20.0,
+        exit_clearance_m=16.0,
+        entry_maximum_steering=0.04,
+        exit_maximum_steering=0.07,
+    )
+    parameters.update(overrides)
+    return StraightBurstGate(**parameters)
+
+
+def update_burst(gate, timestamp, **overrides):
+    values = dict(
+        steering_angle=0.02,
+        front_clearance_m=25.0,
+        safety_speed_scale=1.0,
+        obstacle_detected=False,
+        timestamp_sec=timestamp,
+    )
+    values.update(overrides)
+    return gate.update(**values)
+
+
+def test_straight_burst_requires_persistent_open_corridor():
+    gate = burst_gate()
+    assert not update_burst(gate, 0.0)
+    assert not update_burst(gate, 0.1)
+    assert update_burst(gate, 0.2)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"steering_angle": 0.05},
+        {"front_clearance_m": 19.0},
+        {"safety_speed_scale": 0.9},
+        {"obstacle_detected": True},
+    ],
+)
+def test_straight_burst_rejects_unsafe_entry(override):
+    gate = burst_gate(confirmation_updates=1)
+    assert not update_burst(gate, 0.0, **override)
+
+
+def test_straight_burst_exits_early_before_the_ordinary_straight_gate():
+    gate = burst_gate(confirmation_updates=1)
+    assert update_burst(gate, 0.0)
+    assert not update_burst(gate, 0.1, front_clearance_m=15.9)
+
+
+def test_straight_burst_is_time_bounded_and_cooled_down():
+    gate = burst_gate(confirmation_updates=1)
+    assert update_burst(gate, 0.0)
+    assert update_burst(gate, 0.9)
+    assert not update_burst(gate, 1.0)
+    assert not update_burst(gate, 1.4)
+    assert update_burst(gate, 1.5)
+
+
+def steering_adapter(**overrides):
+    parameters = dict(
+        activation_speed_mps=2.5,
+        full_effect_speed_mps=3.5,
+        proportional_gain=0.2,
+        lead_gain=0.4,
+        previous_steering_smoothing=0.5,
+        minimum_steering_magnitude=0.03,
+        maximum_correction=0.12,
+    )
+    parameters.update(overrides)
+    return SpeedConditionedSteeringAdapter(**parameters)
+
+
+def test_speed_conditioned_steering_is_neutral_at_normal_speed():
+    adapter = steering_adapter()
+    assert adapter.compute(0.2, 2.5) == pytest.approx(0.2)
+    assert adapter.intervention_count == 0
+
+
+def test_speed_conditioned_steering_increases_high_speed_turn_in():
+    adapter = steering_adapter()
+    adapter.compute(0.05, 2.0)
+    adapted = adapter.compute(0.2, 3.5)
+    assert adapted > 0.2
+    assert adapted <= 0.32
+    assert adapter.intervention_count == 1
+
+
+def test_speed_conditioned_steering_preserves_turn_direction():
+    adapter = steering_adapter()
+    adapter.compute(-0.05, 2.0)
+    adapted = adapter.compute(-0.2, 3.5)
+    assert adapted < -0.2
+
+
+def test_speed_conditioned_steering_ignores_straight_noise():
+    adapter = steering_adapter(minimum_steering_magnitude=0.03)
+    assert adapter.compute(0.01, 3.5) == pytest.approx(0.01)
+
+
+def test_speed_conditioned_steering_bounds_correction():
+    adapter = steering_adapter(
+        proportional_gain=2.0,
+        lead_gain=2.0,
+        maximum_correction=0.1,
+    )
+    adapter.compute(0.05, 2.0)
+    assert adapter.compute(0.8, 3.5) == pytest.approx(0.9)

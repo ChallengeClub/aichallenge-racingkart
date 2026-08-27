@@ -12,6 +12,8 @@ from autoware_auto_vehicle_msgs.msg import VelocityReport
 from tiny_lidar_net_controller_core import TinyLidarNetCore
 from tiny_lidar_net_controller.speed_controller import (
     SpeedController,
+    SpeedConditionedSteeringAdapter,
+    StraightBurstGate,
     StuckDetector,
     TimeToCollisionGovernor,
     calculate_forward_clearance,
@@ -66,6 +68,24 @@ class TinyLidarNetNode(Node):
         self.declare_parameter('speed_control.minimum_closing_speed_mps', 0.5)
         self.declare_parameter('speed_control.ttc_rate_history_size', 3)
         self.declare_parameter('speed_control.ttc_hold_steps', 5)
+        self.declare_parameter('speed_control.straight_burst_enabled', False)
+        self.declare_parameter('speed_control.straight_burst_speed_mps', 3.25)
+        self.declare_parameter('speed_control.straight_burst_confirmation_updates', 8)
+        self.declare_parameter('speed_control.straight_burst_maximum_duration_sec', 1.5)
+        self.declare_parameter('speed_control.straight_burst_cooldown_sec', 1.0)
+        self.declare_parameter('speed_control.straight_burst_entry_clearance_m', 20.0)
+        self.declare_parameter('speed_control.straight_burst_exit_clearance_m', 16.0)
+        self.declare_parameter('speed_control.straight_burst_entry_steering', 0.04)
+        self.declare_parameter('speed_control.straight_burst_exit_steering', 0.07)
+        self.declare_parameter('speed_control.straight_burst_obstacle_distance_m', 12.0)
+        self.declare_parameter('speed_conditioned_steering.enabled', False)
+        self.declare_parameter('speed_conditioned_steering.activation_speed_mps', 2.5)
+        self.declare_parameter('speed_conditioned_steering.full_effect_speed_mps', 3.5)
+        self.declare_parameter('speed_conditioned_steering.proportional_gain', 0.18)
+        self.declare_parameter('speed_conditioned_steering.lead_gain', 0.35)
+        self.declare_parameter('speed_conditioned_steering.previous_smoothing', 0.7)
+        self.declare_parameter('speed_conditioned_steering.minimum_steering', 0.03)
+        self.declare_parameter('speed_conditioned_steering.maximum_correction', 0.12)
         self.declare_parameter('npc_tracker.enabled', False)
         self.declare_parameter('npc_tracker.maximum_distance_m', 6.0)
         self.declare_parameter('npc_tracker.confirmation_hits', 3)
@@ -167,6 +187,64 @@ class TinyLidarNetNode(Node):
         self.predictive_avoidance_max_steering = self.get_parameter(
             'speed_control.predictive_avoidance_max_steering'
         ).value
+        self.straight_burst_enabled = self.get_parameter(
+            'speed_control.straight_burst_enabled'
+        ).value
+        self.straight_burst_speed_mps = self.get_parameter(
+            'speed_control.straight_burst_speed_mps'
+        ).value
+        self.straight_burst_obstacle_distance_m = self.get_parameter(
+            'speed_control.straight_burst_obstacle_distance_m'
+        ).value
+        self.straight_burst_gate = StraightBurstGate(
+            confirmation_updates=self.get_parameter(
+                'speed_control.straight_burst_confirmation_updates'
+            ).value,
+            maximum_active_duration_sec=self.get_parameter(
+                'speed_control.straight_burst_maximum_duration_sec'
+            ).value,
+            cooldown_sec=self.get_parameter(
+                'speed_control.straight_burst_cooldown_sec'
+            ).value,
+            entry_clearance_m=self.get_parameter(
+                'speed_control.straight_burst_entry_clearance_m'
+            ).value,
+            exit_clearance_m=self.get_parameter(
+                'speed_control.straight_burst_exit_clearance_m'
+            ).value,
+            entry_maximum_steering=self.get_parameter(
+                'speed_control.straight_burst_entry_steering'
+            ).value,
+            exit_maximum_steering=self.get_parameter(
+                'speed_control.straight_burst_exit_steering'
+            ).value,
+        )
+        self.speed_conditioned_steering_enabled = self.get_parameter(
+            'speed_conditioned_steering.enabled'
+        ).value
+        self.speed_conditioned_steering = SpeedConditionedSteeringAdapter(
+            activation_speed_mps=self.get_parameter(
+                'speed_conditioned_steering.activation_speed_mps'
+            ).value,
+            full_effect_speed_mps=self.get_parameter(
+                'speed_conditioned_steering.full_effect_speed_mps'
+            ).value,
+            proportional_gain=self.get_parameter(
+                'speed_conditioned_steering.proportional_gain'
+            ).value,
+            lead_gain=self.get_parameter(
+                'speed_conditioned_steering.lead_gain'
+            ).value,
+            previous_steering_smoothing=self.get_parameter(
+                'speed_conditioned_steering.previous_smoothing'
+            ).value,
+            minimum_steering_magnitude=self.get_parameter(
+                'speed_conditioned_steering.minimum_steering'
+            ).value,
+            maximum_correction=self.get_parameter(
+                'speed_conditioned_steering.maximum_correction'
+            ).value,
+        )
         self.npc_tracker_enabled = self.get_parameter('npc_tracker.enabled').value
         self.npc_tracker = LidarObstacleTracker(
             maximum_distance_m=self.get_parameter(
@@ -347,6 +425,11 @@ class TinyLidarNetNode(Node):
         # avoidance is only appropriate on an otherwise straight path; on a
         # curve, rapidly changing wall ranges are not evidence of an NPC.
         accel, steer = self.core.process(ranges)
+        if self.speed_conditioned_steering_enabled:
+            steer = self.speed_conditioned_steering.compute(
+                steer,
+                self.current_speed_mps,
+            )
         predictive_scale = 1.0
         compact_obstacle_detected = False
         if self.predictive_slowdown_enabled:
@@ -411,6 +494,26 @@ class TinyLidarNetNode(Node):
             if force_recovery:
                 self.recovery_intervention_count += 1
 
+        burst_obstacle_detected = False
+        straight_burst_active = False
+        if self.straight_burst_enabled:
+            burst_obstacle_detected = detect_compact_forward_obstacle(
+                ranges,
+                angles,
+                range_min=msg.range_min,
+                range_max=msg.range_max,
+                maximum_distance_m=self.straight_burst_obstacle_distance_m,
+            )
+            straight_burst_active = self.straight_burst_gate.update(
+                steering_angle=steer,
+                front_clearance_m=front_clearance,
+                safety_speed_scale=speed_scale,
+                obstacle_detected=(
+                    burst_obstacle_detected or tracked_threat is not None
+                ),
+                timestamp_sec=now_monotonic,
+            )
+
         # 2. Apply longitudinal control and the lateral safety residual.
         if self.speed_control_enabled:
             accel = (
@@ -421,7 +524,11 @@ class TinyLidarNetNode(Node):
                     target_speed_mps=select_target_speed(
                         base_speed_mps=self.speed_controller.target_speed_mps,
                         straight_speed_mps=(
-                            self.straight_speed_mps
+                            (
+                                self.straight_burst_speed_mps
+                                if straight_burst_active
+                                else self.straight_speed_mps
+                            )
                             if self.straight_boost_enabled
                             else self.speed_controller.target_speed_mps
                         ),
@@ -469,6 +576,8 @@ class TinyLidarNetNode(Node):
                     f"Recovery scans: {self.recovery_intervention_count} | "
                     f"Tracked threats: {self.npc_tracker.confirmed_threat_count}"
                     f" | Passing activations: {self.npc_passing_gate.activation_count}"
+                    f" | Straight bursts: {self.straight_burst_gate.activation_count}"
+                    f" | Speed steer: {self.speed_conditioned_steering.intervention_count}"
                 )
                 self.inference_times.clear()
             

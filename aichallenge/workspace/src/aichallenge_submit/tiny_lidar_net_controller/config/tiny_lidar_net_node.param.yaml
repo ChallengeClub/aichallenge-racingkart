@@ -39,6 +39,30 @@
       minimum_closing_speed_mps: 0.5
       ttc_rate_history_size: 3
       ttc_hold_steps: 5
+      # A high target is allowed only after a persistently open, nearly straight
+      # corridor is confirmed. The pulse ends before the ordinary straight gate.
+      straight_burst_enabled: false
+      straight_burst_speed_mps: 3.5
+      straight_burst_confirmation_updates: 5
+      straight_burst_maximum_duration_sec: 2.5
+      straight_burst_cooldown_sec: 1.0
+      straight_burst_entry_clearance_m: 16.0
+      straight_burst_exit_clearance_m: 13.0
+      straight_burst_entry_steering: 0.05
+      straight_burst_exit_steering: 0.07
+      straight_burst_obstacle_distance_m: 12.0
+
+    # Compensate for the LiDAR-only steering policy not observing vehicle speed.
+    # The residual is zero at normal speed and bounded during a fast turn-in.
+    speed_conditioned_steering:
+      enabled: false
+      activation_speed_mps: 2.5
+      full_effect_speed_mps: 3.5
+      proportional_gain: 0.18
+      lead_gain: 0.35
+      previous_smoothing: 0.7
+      minimum_steering: 0.03
+      maximum_correction: 0.12
 
     # Confirm compact obstacles over multiple scans before treating them as an
     # NPC threat.  The adopted v2 also accepts a cluster with one visible edge
